@@ -4,12 +4,33 @@ from app.prompts import SYSTEM_PROMPT, USER_PROMPT_TEMPLATE
 
 client = OpenAI()
 
-DRAFT_RESPONSE_SCHEMA = DraftResponse.model_json_schema()
+def add_additional_properties_false(schema: dict) -> dict:
+    """Recursively add additionalProperties: false and ensure all properties are required for OpenAI compatibility."""
+    if isinstance(schema, dict):
+        # If it's an object type, add additionalProperties: false
+        if schema.get("type") == "object":
+            schema["additionalProperties"] = False
+            # OpenAI requires all properties to be in the required array
+            if "properties" in schema:
+                schema["required"] = list(schema["properties"].keys())
+        # Recursively process all values (including properties, items, $defs, etc.)
+        for key, value in schema.items():
+            if isinstance(value, (dict, list)):
+                add_additional_properties_false(value)
+    elif isinstance(schema, list):
+        # Process each item in the list
+        for item in schema:
+            if isinstance(item, (dict, list)):
+                add_additional_properties_false(item)
+    return schema
+
+DRAFT_RESPONSE_SCHEMA = add_additional_properties_false(DraftResponse.model_json_schema())
 
 def draft_logframe(raw_text: str) -> DraftResponse:
-    resp = client.responses.create(
-        model="gpt-4.1-mini",
-        input=[
+    print(client)
+    resp = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": USER_PROMPT_TEMPLATE.format(raw_text=raw_text)},
         ],
@@ -24,9 +45,8 @@ def draft_logframe(raw_text: str) -> DraftResponse:
         temperature=0,
     )
 
-    data = resp.output_parsed
-    if data is None:
-        import json
-        data = json.loads(resp.output_text)
+    import json
+    content = resp.choices[0].message.content
+    data = json.loads(content)
 
     return DraftResponse(**data)

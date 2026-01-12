@@ -15,9 +15,9 @@ Return JSON only.
 
 USER_PROMPT_TEMPLATE = """
 Raw project description:
-"""
+<<<
 {raw_text}
-"""
+>>>
 
 Produce:
 - goal

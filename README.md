@@ -74,6 +74,13 @@ lfd_poc/
 
 ## How to Run Locally (Step‑by‑Step)
 
+### 0. 激活虚拟环境（每次开发前）
+
+cd lfd_poc
+source .venv/bin/activate
+pip install --upgrade pip （强烈建议激活后升级）
+
+
 ### 1. Prerequisites
 
 - Python **3.10 or newer**
