@@ -5,7 +5,33 @@ from app.prompts import SYSTEM_PROMPT, USER_PROMPT_TEMPLATE
 client = OpenAI()
 
 def add_additional_properties_false(schema: dict) -> dict:
-    """Recursively add additionalProperties: false and ensure all properties are required for OpenAI compatibility."""
+    """Recursively add additionalProperties: false and ensure all properties are required for OpenAI compatibility.
+    
+    Example transformation:
+    
+    Before (from Pydantic):
+    {
+        "type": "object",
+        "properties": {
+            "name": {"type": "string"},
+            "age": {"type": "integer"},
+            "email": {"type": "string"}
+        },
+        "required": ["name", "age"]  # email has default, so not required
+    }
+    
+    After (OpenAI-compatible):
+    {
+        "type": "object",
+        "properties": {
+            "name": {"type": "string"},
+            "age": {"type": "integer"},
+            "email": {"type": "string"}
+        },
+        "required": ["name", "age", "email"],  # All properties now required
+        "additionalProperties": False  # Added for OpenAI
+    }
+    """
     if isinstance(schema, dict):
         # If it's an object type, add additionalProperties: false
         if schema.get("type") == "object":
@@ -46,7 +72,15 @@ def draft_logframe(raw_text: str) -> DraftResponse:
     )
 
     import json
+    # By default, OpenAI returns 1 choice (n=1), so choices[0] is safe
+    # If n > 1 is specified, this would return the first choice
+    if not resp.choices:
+        raise ValueError("No choices returned from OpenAI API")
+    
     content = resp.choices[0].message.content
+    if content is None:
+        raise ValueError("No content in response message")
+    
     data = json.loads(content)
 
     return DraftResponse(**data)
