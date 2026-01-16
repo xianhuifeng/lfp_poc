@@ -20,7 +20,7 @@ If this works, **all six Outcomes in the v2 LogFrame are technically achievable*
 
 ---
 
-## What This POC Does (Precisely)
+## What This POC Does
 
 Given messy project text, the system produces:
 
