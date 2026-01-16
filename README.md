@@ -161,7 +161,7 @@ preprocess output (2.2)
 drafting output (2.3)
 
 ### 6. Run tests (optional but recommended)
-pytest
+python -m pytest
 
 
 Tests will be skipped automatically if OPENAI_API_KEY is not set.
