@@ -1,257 +1,276 @@
-# LogFrame Designer Pro (LFD‑Pro) — POC
+LogFrame Designer Pro (LFD-Pro) — POC
 
-This repository is a **minimal, engineering‑first Proof of Concept** for  
-**LogFrame Designer Pro v2**.
+This repository is a minimal, engineering-first Proof of Concept for
+LogFrame Designer Pro (LFD-Pro) v2.
 
-The goal of this POC is intentionally narrow:
+The scope of this POC is intentionally narrow and explicit:
 
-> 🎯 **Prove Outcome 1 is feasible**
->
-> **Messy human text → structured LogFrame draft**
->
-> - No UI
-> - No database
-> - No agents
-> - No memory
-> - Strong schema guarantees
+🎯 Prove Outcome 1 is feasible
 
-If this works, everything else can be layered on later.
+Messy human text → structured LogFrame draft
 
----
+No UI
 
-## What This POC Does
+No database
+
+No agents
+
+No memory
+
+Strong schema guarantees
+
+Clear engine boundaries
+
+If this works, all six Outcomes in the v2 LogFrame are technically achievable by layering additional engines.
+
+What This POC Does (Precisely)
 
 Given messy project text, the system produces:
 
-- A **draft Logical Framework**
-  - Goal
-  - Purpose
-  - Outcomes (1–5)
-  - Inputs (1–5)
-- A **confidence score**
-- **Clarifying questions** if information is missing
+Engine 2.2 — Input Intake + Preprocessor
+
+A normalized version of the raw input
+
+A detected intent:
+
+create | revise | audit | export | portfolio_check
+
+Lightweight entity hints (best-effort):
+
+goal-like phrases
+
+metric keywords
+
+organizational terms
+
+A stable raw_input_id
+
+Engine 2.3 — Structure Drafting Engine
+
+A draft Logical Framework:
+
+Goal
+
+Purpose
+
+Outcomes (1–5)
+
+Inputs (1–5)
+
+A confidence score (0–1)
+
+Clarifying questions when information is missing
+
+A mapping that shows how parts of the input support each field
 
 All outputs are:
-- Strictly schema‑validated
-- Deterministic (temperature = 0)
-- Safe to extend with additional engines later
 
----
+Strictly schema-validated (Pydantic)
 
-## Tech Stack (Minimal by Design)
+Deterministic (temperature = 0)
 
-### Backend
-- Python 3.10+
-- FastAPI
-- Pydantic v2
-- OpenAI API (Responses API + Structured Outputs)
-- Uvicorn
+Safe to extend with additional engines later
 
-### Explicitly NOT Used
-- ❌ Database
-- ❌ Frontend
-- ❌ LangChain / agent frameworks
-- ❌ State or memory
+What This POC Explicitly Does Not Do
 
----
+❌ No UI
 
-## Project Structure
+❌ No persistence or memory
 
-```
+❌ No agent loop or autonomous behavior
+
+❌ No portfolio or cross-project reasoning
+
+❌ No scoring, audit, or certification logic
+
+Those belong to later Outcomes, not this POC.
+
+Tech Stack (Minimal by Design)
+Backend
+
+Python 3.10+
+
+FastAPI
+
+Pydantic v2
+
+OpenAI API (Chat Completions, JSON-only outputs)
+
+Uvicorn
+
+Explicitly NOT Used
+
+❌ Database
+
+❌ Frontend
+
+❌ LangChain / agent frameworks
+
+❌ State or memory layers
+
+Project Structure
 lfd_poc/
 ├── app/
-│   ├── main.py          # FastAPI entrypoint
-│   ├── schemas.py       # Canonical data contracts (Pydantic)
-│   ├── prompts.py       # Prompt definitions
-│   └── engine_draft.py  # Structure Drafting Engine (Outcome 1)
+│   ├── main.py                  # FastAPI entrypoint
+│   ├── schemas.py               # Canonical data contracts (Pydantic)
+│   ├── prompts.py               # Prompt definitions
+│   ├── orchestrator.py          # 2.2 → 2.3 pipeline
+│   └── engines/
+│       ├── intake_preprocess.py # Engine 2.2
+│       └── structure_drafting.py# Engine 2.3
 ├── tests/
-│   └── test_engine.py   # Minimal pytest coverage
+│   └── test_pipeline.py         # Minimal pipeline tests
 ├── pyproject.toml
 └── README.md
-```
 
----
-
-## How to Run Locally (Step‑by‑Step)
-
-### 0. 激活虚拟环境（每次开发前）
-
+How to Run Locally (Step-by-Step)
+0. Activate virtual environment (recommended)
 cd lfd_poc
 source .venv/bin/activate
-pip install --upgrade pip （强烈建议激活后升级）
+pip install --upgrade pip
 
+1. Prerequisites
 
-### 1. Prerequisites
+Python 3.10 or newer
 
-- Python **3.10 or newer**
-- An OpenAI API key
+An OpenAI API key
 
 Check Python version:
-```bash
+
 python --version
-```
 
----
-
-### 2. Set your OpenAI API key
-
-```bash
+2. Set your OpenAI API key
 export OPENAI_API_KEY=your_api_key_here
-```
+
 
 (Add this to your shell profile if you want it persistent.)
 
----
+3. Install dependencies
 
-### 3. Install dependencies
+With Poetry:
 
-If you use **Poetry**:
-```bash
 poetry install
 poetry shell
-```
 
-Or install manually with pip:
-```bash
+
+Or manually:
+
 pip install fastapi uvicorn pydantic openai pytest
-```
 
----
-
-### 4. Start the API
+4. Start the API
 
 From the project root:
 
-```bash
 uvicorn app.main:app --reload
-```
+
 
 You should see:
-```
+
 Uvicorn running on http://127.0.0.1:8000
-```
 
----
+5. Use the API
 
-### 5. Use the API
-
-Open your browser:
+Open:
 
 👉 http://127.0.0.1:8000/docs
 
-- Expand `POST /draft`
-- Paste messy project text
-- Click **Execute**
-- Observe structured output
+Expand POST /draft
 
----
+Paste messy project text
 
-### 6. Run tests (optional but recommended)
+Click Execute
 
-```bash
+Observe:
+
+preprocess output (2.2)
+
+drafting output (2.3)
+
+6. Run tests (optional but recommended)
 pytest
-```
 
-Tests will be skipped automatically if `OPENAI_API_KEY` is not set.
 
----
+Tests will be skipped automatically if OPENAI_API_KEY is not set.
 
-## Architecture Overview
+Architecture Overview
 
-This POC follows a **layered, engine‑oriented architecture**.
+This POC follows a layered, engine-oriented architecture.
 
-### High‑Level Flow
-
-```
+High-Level Flow
 Raw Text
    ↓
-Structure Drafting Engine
+Engine 2.2: Intake + Preprocess
    ↓
-Schema‑Validated Draft LogFrame
-```
+Engine 2.3: Structure Drafting
+   ↓
+Schema-Validated Draft LogFrame
 
----
+Core Architectural Principles
+1. Schema-First Design (Non-Negotiable)
 
-### Core Architectural Principles
+Pydantic models define the canonical contract
 
-#### 1. Schema‑First Design (Non‑Negotiable)
+The LLM must comply or fail
 
-- Pydantic models define the **canonical contract**
-- The LLM must comply or fail
-- Prevents silent corruption and hallucinated structure
+Prevents silent corruption and hallucinated structure
 
-#### 2. Engines, Not Agents
+2. Engines, Not Agents
 
-Each capability is a **pure, stateless engine**:
+Each capability is a pure, stateless engine:
 
-- Input → Output
-- No hidden memory
-- No cross‑engine coupling
+Input → Output
 
-This POC implements **Engine #1** only.
+No hidden memory
 
----
+No implicit orchestration
 
-### Engine #1 — Structure Drafting Engine
+Independently testable
 
-**Responsibility**
-- Convert messy text into a draft LogFrame
+This POC implements two engines:
 
-**Inputs**
-- Raw human text
+Engine 2.2: Intake + Preprocess
 
-**Outputs**
-- `DraftLogFrame`
-- Confidence score
-- Clarifying questions
+Engine 2.3: Structure Drafting
 
-**Failure Mode**
-- Invalid output → schema rejection → hard failure (by design)
+3. Orchestration Is Explicit
 
----
+intent and entities are produced by Engine 2.2
 
-### Planned Engine Expansion (Not Implemented Yet)
+They are not used by Engine 2.3
 
-```
-Engine 1: Structure Drafting        ✅ (this repo)
-Engine 2: Objective Classification  ⏳
-Engine 3: Causal Logic Validation   ⏳
-Engine 4: Indicator Quality Check   ⏳
-```
+They are reserved for:
 
-Each engine:
-- Reuses the same schemas
-- Uses the same FastAPI surface
-- Can be independently tested
+future orchestration decisions
 
----
+clarification prioritization
 
-## Why This Architecture Matters
+downstream engines (audit, measures, assumptions)
 
-This POC proves:
+This avoids coupling intent detection with semantic reasoning.
 
-- The problem is **machine‑assistable**
-- The output can be **structurally guaranteed**
-- The system can scale **engine‑by‑engine**, not as a monolith
+Why This Architecture Matters
+
+This POC proves that:
+
+Messy strategic input is machine-interpretable
+
+Structure can be produced with verifiable guarantees
+
+The architecture scales engine-by-engine, not as a monolith
+
+Later Outcomes (audit, scoring, portfolio) are feasible without refactoring
 
 This is not a demo toy.
-It is a **credible engineering starting point**.
+It is a credible engineering foundation.
 
----
+Next Logical Steps (When Ready)
 
-## Next Logical Steps (When Ready)
+Add Objective Classification Engine (Outcome 2)
 
-- Add Objective Classification Engine
-- Introduce Canonical LFO v2 schema
-- Add UI or chat interface (optional)
-- Add persistence only **after** logic is stable
+Add Causal Logic Engine
 
----
+Add Measure Quality Engine
 
-## Final Note
+Introduce Canonical LFO v2 schema
 
-> You are not “building an AI system” here.
->
-> You are building a **provable, extensible decision‑support engine**.
-
-That distinction matters.
+Add memory and portfolio logic only after reasoning stabilizes
