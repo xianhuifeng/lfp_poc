@@ -13,3 +13,4 @@ __pycache__/
 .env.production
 app/__pycache__/
 app/.DS_Storegut
+pyproject.toml
