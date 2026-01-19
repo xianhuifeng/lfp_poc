@@ -1,13 +1,18 @@
 from fastapi import FastAPI
-from pydantic import BaseModel
-from app.schemas import DraftRequest, DraftResponse
-from app.orchestrator import run_pipeline
+from app.schemas import DraftRequest, DraftResponse, ResumeRequest, ResumeResponse
+from app.orchestrator import run_pipeline, resume_with_answers
 
 app = FastAPI(title="LFD-Pro POC")
 
-class DraftRequest(BaseModel):
-    text: str
-
 @app.post("/draft", response_model=DraftResponse)
 def draft_endpoint(req: DraftRequest):
-     return run_pipeline(req.text)
+    return run_pipeline(req.text)
+
+@app.post("/resume", response_model=ResumeResponse)
+def resume_endpoint(req: ResumeRequest):
+    return resume_with_answers(
+        draft_lfo=req.draft_lfo,
+        question_set=req.question_set,
+        answers=req.answers,
+        policy=req.policy,
+    )
