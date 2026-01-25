@@ -1,9 +1,4 @@
-Here is an **updated README** that accurately reflects **what you have now**, without overselling future work and without bloating the scope.
-I’ve preserved your original tone and intent, but corrected the parts that are no longer true and clarified the new behavior.
 
-You can replace your README with this.
-
----
 
 # LogFrame Designer Pro (LFD-Pro) — POC
 
