@@ -1,57 +1,38 @@
 from openai import OpenAI
 import json
-from app.schemas import DraftEngineOutput
-from app.prompts import SYSTEM_PROMPT_DRAFT, USER_PROMPT_DRAFT
+from app.prompts import SYSTEM_PROMPT_DRAFT, USER_PROMPT_DRAFT, SYSTEM_PROMPT_REFINE, USER_PROMPT_REFINE
+from app.schemas import DraftEngineOutput, DraftLogFrame, ClarificationQuestion
 
 client = OpenAI()
 
-# def add_additional_properties_false(schema: dict) -> dict:
-#     """Recursively add additionalProperties: false and ensure all properties are required for OpenAI compatibility.
-    
-#     Example transformation:
-    
-#     Before (from Pydantic):
-#     {
-#         "type": "object",
-#         "properties": {
-#             "name": {"type": "string"},
-#             "age": {"type": "integer"},
-#             "email": {"type": "string"}
-#         },
-#         "required": ["name", "age"]  # email has default, so not required
-#     }
-    
-#     After (OpenAI-compatible):
-#     {
-#         "type": "object",
-#         "properties": {
-#             "name": {"type": "string"},
-#             "age": {"type": "integer"},
-#             "email": {"type": "string"}
-#         },
-#         "required": ["name", "age", "email"],  # All properties now required
-#         "additionalProperties": False  # Added for OpenAI
-#     }
-#     """
-#     if isinstance(schema, dict):
-#         # If it's an object type, add additionalProperties: false
-#         if schema.get("type") == "object":
-#             schema["additionalProperties"] = False
-#             # OpenAI requires all properties to be in the required array
-#             if "properties" in schema:
-#                 schema["required"] = list(schema["properties"].keys())
-#         # Recursively process all values (including properties, items, $defs, etc.)
-#         for key, value in schema.items():
-#             if isinstance(value, (dict, list)):
-#                 add_additional_properties_false(value)
-#     elif isinstance(schema, list):
-#         # Process each item in the list
-#         for item in schema:
-#             if isinstance(item, (dict, list)):
-#                 add_additional_properties_false(item)
-#     return schema
+def _clamp_list(x, max_items: int):
+    if not isinstance(x, list):
+        return x
+    return x[:max_items]
 
-#DRAFT_RESPONSE_SCHEMA = add_additional_properties_false(DraftResponse.model_json_schema())
+def _sanitize_draft_engine_output(data: dict) -> dict:
+    # defensive: only touch known fields
+    draft = data.get("draft_lfo") or {}
+    draft["outcomes"] = _clamp_list(draft.get("outcomes", []), 5)
+    draft["inputs"] = _clamp_list(draft.get("inputs", []), 5)
+    data["draft_lfo"] = draft
+
+    data["open_questions"] = _clamp_list(data.get("open_questions", []), 5)
+
+    # Also ensure mapping doesn't refer to removed items (optional, but nice)
+    mapping = data.get("mapping") or {}
+    outcomes_support = mapping.get("outcomes_support") or {}
+    inputs_support = mapping.get("inputs_support") or {}
+
+    # keep only keys that still exist after clamping
+    kept_outcomes = set(draft.get("outcomes", []))
+    kept_inputs = set(draft.get("inputs", []))
+
+    mapping["outcomes_support"] = {k: v for k, v in outcomes_support.items() if k in kept_outcomes}
+    mapping["inputs_support"] = {k: v for k, v in inputs_support.items() if k in kept_inputs}
+    data["mapping"] = mapping
+
+    return data
 
 
 def structure_draft(normalized_input: str) -> DraftEngineOutput:
@@ -67,40 +48,39 @@ def structure_draft(normalized_input: str) -> DraftEngineOutput:
     content = resp.choices[0].message.content
     try:
         data = json.loads(content)
+        data = _sanitize_draft_engine_output(data)
         return DraftEngineOutput(**data)
     except Exception as e:
         raise ValueError(f"Invalid LLM JSON: {e}\nRaw output:\n{content}")
 
+def refine_draft(
+    normalized_input: str,
+    draft_lfo: DraftLogFrame,
+    question_set: list[ClarificationQuestion],
+    answers: dict[str, str],
+) -> DraftEngineOutput:
+    draft_json = draft_lfo.model_dump_json(indent=2)
+    questions_json = json.dumps([q.model_dump() for q in question_set], indent=2)
+    answers_json = json.dumps(answers or {}, indent=2)
 
-# def draft_logframe(raw_text: str) -> DraftResponse:
-#     print(client)
-#     resp = client.chat.completions.create(
-#         model="gpt-4o-mini",
-#         messages=[
-#             {"role": "system", "content": SYSTEM_PROMPT},
-#             {"role": "user", "content": USER_PROMPT_TEMPLATE.format(raw_text=raw_text)},
-#         ],
-#         response_format={
-#             "type": "json_schema",
-#             "json_schema": {
-#                 "name": "DraftResponse",
-#                 "schema": DRAFT_RESPONSE_SCHEMA,
-#                 "strict": True,
-#             },
-#         },
-#         temperature=0,
-#     )
+    resp = client.chat.completions.create(
+        model="gpt-4.1-mini",
+        temperature=0,
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT_REFINE},
+            {"role": "user", "content": USER_PROMPT_REFINE.format(
+                normalized_input=normalized_input,
+                draft_json=draft_json,
+                questions_json=questions_json,
+                answers_json=answers_json,
+            )},
+        ],
+    )
 
-#     import json
-#     # By default, OpenAI returns 1 choice (n=1), so choices[0] is safe
-#     # If n > 1 is specified, this would return the first choice
-#     if not resp.choices:
-#         raise ValueError("No choices returned from OpenAI API")
-    
-#     content = resp.choices[0].message.content
-#     if content is None:
-#         raise ValueError("No content in response message")
-    
-#     data = json.loads(content)
-
-#     return DraftResponse(**data)
+    content = resp.choices[0].message.content
+    try:
+        data = json.loads(content)
+        data = _sanitize_draft_engine_output(data)
+        return DraftEngineOutput(**data)
+    except Exception as e:
+        raise ValueError(f"Invalid LLM JSON: {e}\nRaw output:\n{content}")

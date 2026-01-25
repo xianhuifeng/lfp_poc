@@ -87,10 +87,11 @@ lfd_poc/
 │ ├── main.py # FastAPI entrypoint
 │ ├── schemas.py # Canonical data contracts (Pydantic)
 │ ├── prompts.py # Prompt definitions
-│ ├── orchestrator.py # 2.2 → 2.3 pipeline
+│ ├── orchestrator.py # 2.2 → 2.4 pipeline
 │ └── engines/
-│ ├── intake_preprocess.py # Engine 2.2
-│ └── structure_drafting.py# Engine 2.3
+│  ├── intake_preprocess.py # Engine 2.2
+│  └── structure_drafting.py# Engine 2.3
+│  └── clarification_manager.py# Engine 2.4
 ├── tests/
 │ └── test_pipeline.py # Minimal pipeline tests
 ├── pyproject.toml

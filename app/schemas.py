@@ -94,3 +94,19 @@ class ResumeResponse(BaseModel):
     applied_answers: Dict[str, str] = Field(default_factory=dict)
     clarification: ClarificationOutput
 
+
+
+# -----------------------------
+# Refine Draft
+# -----------------------------
+class RefineRequest(BaseModel):
+    raw_text: str
+    draft_lfo: DraftLogFrame
+    question_set: List[ClarificationQuestion] = Field(default_factory=list)
+    answers: Dict[str, str] = Field(default_factory=dict)
+    policy: ClarificationPolicy = Field(default_factory=ClarificationPolicy)
+
+class RefineResponse(BaseModel):
+    preprocess: PreprocessOutput
+    drafting: DraftEngineOutput
+    clarification: ClarificationOutput
