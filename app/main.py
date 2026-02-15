@@ -15,8 +15,8 @@ app.add_middleware(
     allow_headers=["*"]
 )
 
-from app.schemas import DraftRequest, DraftResponse, ResumeRequest, ResumeResponse, RefineRequest, RefineResponse
-from app.orchestrator import run_pipeline, resume_with_answers, run_refine
+from app.schemas import DraftRequest, DraftResponse, ResumeRequest, ResumeResponse, RefineRequest, RefineResponse, ObjectiveClassifierRequest, ObjectiveClassifierResponse
+from app.orchestrator import run_pipeline, resume_with_answers, run_refine, run_objective_classifier
 
 
 @app.post("/draft", response_model=DraftResponse)
@@ -41,3 +41,12 @@ def refine_endpoint(req: RefineRequest):
         answers=req.answers,
         policy=req.policy,
     )
+
+@app.post("/classify-objectives", response_model=ObjectiveClassifierResponse)
+def classify_objectives_endpoint(req: ObjectiveClassifierRequest):
+    classification = run_objective_classifier(
+        lfo=req.lfo,
+        context=req.context,
+        policy=req.policy,
+    )
+    return ObjectiveClassifierResponse(classification=classification)

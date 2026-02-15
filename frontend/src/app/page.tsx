@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { api, type ClarificationQuestion, type DraftLogFrame, type DraftResponse, type RefineResponse } from "./apiClient";
+import { api, type ClarificationQuestion, type DraftLogFrame, type DraftResponse, type RefineResponse, type ObjectiveClassification } from "./apiClient";
 
 type ApiResult = DraftResponse | RefineResponse;
 
@@ -25,6 +25,9 @@ export default function Page() {
 
   // answers keyed by question id
   const [answers, setAnswers] = useState<Record<string, string>>({});
+  // classification of objectives
+  const [classification, setClassification] = useState<ObjectiveClassification | null>(null);
+
 
   const drafting = (result as any)?.drafting;
   const draftLfo: DraftLogFrame | null = drafting?.draft_lfo ?? null;
@@ -33,6 +36,8 @@ export default function Page() {
   const questionSet: ClarificationQuestion[] = clarification?.question_set ?? [];
 
   const blocked = clarification?.next_action === "wait_for_user";
+  const hasErrors = (classification?.findings ?? []).some(f => f.severity === "error");
+
 
   // reset answers when new questions appear (but keep existing if ids overlap)
   useMemo(() => {
@@ -57,6 +62,19 @@ export default function Page() {
     try {
       const r = await api.draft(rawText);
       setResult(r);
+
+      // classify objectives after generating a draft
+      const lfo = (r as any)?.drafting?.draft_lfo;
+      if (lfo) {
+        try {
+          const res = await api.classifyObjectives({ lfo });
+          setClassification(res.classification);
+        } catch (e) {
+          // non-fatal; don't block UI
+          setClassification(null);
+        }
+      }
+
     } catch (e: any) {
       setError(e?.message ?? String(e));
     } finally {
@@ -83,6 +101,19 @@ export default function Page() {
         policy: { max_questions: 3, allow_proceed_with_assumptions: true },
       });
       setResult(r);
+
+      // classify objectives after refining the draft
+      const lfo = (r as any)?.drafting?.draft_lfo;
+      if (lfo) {
+        try {
+          const res = await api.classifyObjectives({ lfo });
+          setClassification(res.classification);
+        } catch (e) {
+          // non-fatal; don't block UI
+          setClassification(null);
+        }
+      }
+
     } catch (e: any) {
       setError(e?.message ?? String(e));
     } finally {
@@ -267,6 +298,78 @@ export default function Page() {
               <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 8 }}>
                 Goal / Purpose / Outcomes / Inputs (JSON for now)
               </div>
+              {classification && (
+                <div style={{ marginBottom: 10, padding: 10, border: "1px solid #eee", borderRadius: 10, background: "#fcfcff" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <div style={{ fontWeight: 700 }}>Structure integrity</div>
+                    <div style={{ fontSize: 13 }}>
+                      <b>{Number(classification.scores.structure_integrity).toFixed(2)}</b>
+                    </div>
+                  </div>
+
+                  {/* Blocked */}
+                  {(() => {
+                    const hasErrors = classification.findings.some((f) => f.severity === "error");
+                    return (
+                      <div style={{ marginTop: 10, marginBottom: 10 }}>
+                        {hasErrors ? (
+                          <div style={{ padding: 10, borderRadius: 10, border: "1px solid #ffb3b3", background: "#ffecec" }}>
+                            <b>Blocked:</b> Structural issues found. Fix errors to proceed.
+                          </div>
+                        ) : (
+                          <div style={{ padding: 10, borderRadius: 10, border: "1px solid #cfe8cf", background: "#effaf0" }}>
+                            <b>OK:</b> Structure looks good enough to proceed.
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+
+                  {/* Findings */}
+                  <div style={{ marginTop: 8, fontSize: 12, opacity: 0.85 }}>
+                    {classification.findings?.length ? (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        {classification.findings.slice(0, 6).map((f, idx) => (
+                          <div key={idx} style={{ padding: 8, border: "1px solid #f0f0f0", borderRadius: 8 }}>
+                            <div style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
+                              <span style={{ fontWeight: 700 }}>{f.severity.toUpperCase()}</span>
+                              <span style={{ opacity: 0.7 }}>{f.type}</span>
+                            </div>
+                            <div style={{ marginTop: 4 }}>{f.message}</div>
+                            <div style={{ marginTop: 4, opacity: 0.7 }}>
+                              {f.statement.level}[{f.statement.index}]: {f.statement.text}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div>No structural issues detected.</div>
+                    )}
+                  </div>
+
+                  {/* Recommended edits */}
+                  {classification.recommended_edits?.length ? (
+                    <div style={{ marginTop: 10 }}>
+                      <div style={{ fontWeight: 700, marginBottom: 6 }}>Recommended edits</div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                        {classification.recommended_edits.map((e, idx) => (
+                          <div key={idx} style={{ padding: 8, border: "1px solid #eee", borderRadius: 8, fontSize: 12 }}>
+                            <div>
+                              <b>{e.action}</b>
+                              {e.to_level ? ` → ${e.to_level}` : ""}
+                            </div>
+                            <div style={{ opacity: 0.8, marginTop: 4 }}>
+                              {e.statement.level}[{e.statement.index}]: {e.statement.text}
+                            </div>
+                            <div style={{ opacity: 0.75, marginTop: 4 }}>{e.rationale}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              )}
+
               <pre
                 style={{
                   whiteSpace: "pre-wrap",

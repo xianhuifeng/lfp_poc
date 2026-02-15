@@ -4,11 +4,15 @@ from app.schemas import (
     ClarificationQuestion,
     ResumeResponse,
     DraftLogFrame,
-    RefineResponse
+    RefineResponse,
+    ObjectiveClassifierInput,
+    ObjectiveClassifierOutput,
 )
 from app.engines.intake_preprocess import preprocess
 from app.engines.structure_drafting import structure_draft, refine_draft
 from app.engines.clarification_manager import clarification_manager
+from app.engines.objective_classifier import objective_classifier_engine
+
 # Helper function to run the pipeline
 def run_pipeline(raw_text: str) -> DraftResponse:
     p = preprocess(raw_text)
@@ -90,3 +94,17 @@ def run_refine(raw_text: str, draft_lfo: DraftLogFrame,
     )
 
     return RefineResponse(preprocess=p, drafting=d2, clarification=clarification)
+
+
+
+def run_objective_classifier(
+    lfo,
+    context=None,
+    policy=None,
+) -> ObjectiveClassifierOutput:
+    payload = ObjectiveClassifierInput(
+        lfo=lfo,
+        context=context,
+        policy=policy or {},
+    )
+    return objective_classifier_engine(payload)

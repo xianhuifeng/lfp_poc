@@ -52,6 +52,52 @@ export type ClarificationPolicy = {
     preprocess: any;
   };
   
+  export type LfoLevel = "goal" | "purpose" | "outcome" | "input";
+  export type Severity = "info" | "warn" | "error";
+  
+  export type StatementRef = {
+    level: LfoLevel;
+    index: number;
+    text: string;
+  };
+  
+  export type ObjectiveFinding = {
+    type: string;              // keep string for now; you can tighten to union later
+    severity: Severity;
+    message: string;
+    statement: StatementRef;
+    evidence?: Record<string, number>;
+  };
+  
+  export type ObjectiveRecommendedEdit = {
+    statement: StatementRef;
+    action: "relabel" | "split" | "rewrite" | "delete_duplicate";
+    to_level?: LfoLevel | null;
+    replacement_texts?: string[] | null;
+    rationale: string;
+  };
+  
+  export type ObjectiveScores = {
+    structure_integrity: number; // 0..1
+    by_level?: Partial<Record<LfoLevel, number>>;
+  };
+  
+  export type ObjectiveClassification = {
+    findings: ObjectiveFinding[];
+    recommended_edits: ObjectiveRecommendedEdit[];
+    scores: ObjectiveScores;
+  };
+  
+  export type ObjectiveClassifierRequest = {
+    lfo: DraftLogFrame;
+    context?: Record<string, any> | null;
+    policy?: Record<string, any> | null;
+  };
+  
+  export type ObjectiveClassifierResponse = {
+    classification: ObjectiveClassification;
+  };  
+  
   const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
   
   async function postJson<T>(path: string, body: any): Promise<T> {
@@ -70,5 +116,6 @@ export type ClarificationPolicy = {
   export const api = {
     draft: (text: string) => postJson<DraftResponse>("/draft", { text }),
     refine: (req: RefineRequest) => postJson<RefineResponse>("/refine", req),
+    classifyObjectives: (req: ObjectiveClassifierRequest) => postJson<ObjectiveClassifierResponse>("/classify-objectives", req),
   };
   
