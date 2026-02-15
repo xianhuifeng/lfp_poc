@@ -294,6 +294,49 @@ Tests skip automatically if `OPENAI_API_KEY` is not set.
 
 ---
 
+## Deploy For Demo (GitHub + Render + Vercel)
+
+This repo is set up for a quick demo deployment:
+
+- Backend (FastAPI): Render using `render.yaml`
+- Frontend (Next.js): Vercel using `frontend/` as the project root
+
+### 1) Push your branch to GitHub
+
+```bash
+git push -u origin HEAD
+```
+
+### 2) Deploy backend on Render
+
+1. In Render, click **New +** -> **Blueprint**.
+2. Select this GitHub repo.
+3. Render reads `render.yaml` and creates `lfd-poc-api`.
+4. Set env vars in Render:
+   - `OPENAI_API_KEY` = your key
+   - `OBJECTIVE_CHECK_MODE` = `heuristic` (or `hybrid` / `llm`)
+   - `CORS_ALLOW_ORIGINS` = your Vercel URL(s), comma-separated
+5. Deploy and copy your backend URL (for example `https://lfd-poc-api.onrender.com`).
+
+### 3) Deploy frontend on Vercel
+
+1. In Vercel, click **Add New...** -> **Project** and import this repo.
+2. Set **Root Directory** to `frontend`.
+3. Add env var:
+   - `NEXT_PUBLIC_API_BASE` = your Render backend URL
+4. Deploy.
+
+### 4) Final CORS check
+
+After Vercel gives you the frontend URL, make sure it is included in Render's `CORS_ALLOW_ORIGINS` value.
+If needed, update the value and redeploy backend.
+
+### 5) Share with your manager
+
+Send the Vercel frontend URL.
+
+---
+
 ## Architecture Overview
 
 ### High-Level Flow

@@ -1,18 +1,31 @@
+import os
+
 from fastapi import FastAPI
 from fastapi.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(title="LFD-Pro POC")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:3000",
+
+def _cors_origins() -> list[str]:
+    # Comma-separated list, e.g. "https://your-app.vercel.app,https://other.example.com"
+    raw = (os.getenv("CORS_ALLOW_ORIGINS") or "").strip()
+    if raw:
+        return [item.strip() for item in raw.split(",") if item.strip()]
+    return [
+        "http://localhost:3000",
         "http://127.0.0.1:3000",
         "http://localhost:3001",
-        "http://127.0.0.1:3001",],
-    allow_credentials=True,  # Set to False when using specific origins
+        "http://127.0.0.1:3001",
+    ]
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins(),
+    allow_credentials=False,
     allow_methods=["*"],
-    allow_headers=["*"]
+    allow_headers=["*"],
 )
 
 from app.schemas import (
@@ -37,6 +50,11 @@ from app.orchestrator import (
     run_causal_logic,
     run_amend_draft,
 )
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
 
 
 @app.post("/draft", response_model=DraftResponse)
