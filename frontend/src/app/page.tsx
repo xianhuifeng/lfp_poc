@@ -37,6 +37,32 @@ type ReviewSuggestion = {
   relabelToLevel?: "goal" | "purpose" | "outcome" | "input";
 };
 
+function normalizeIdPart(value: string): string {
+  return (value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 64);
+}
+
+function buildSuggestionId(
+  source: "structure" | "causal",
+  target: StatementRef,
+  currentText: string,
+  suggestedText: string,
+  rationale: string
+): string {
+  const scope = `${source}-${target.level}-${target.index}`;
+  const fingerprint = [
+    normalizeIdPart(currentText),
+    normalizeIdPart(suggestedText),
+    normalizeIdPart(rationale),
+  ]
+    .filter(Boolean)
+    .join("-");
+  return `${scope}-${fingerprint || "suggestion"}`;
+}
+
 function pretty(obj: any) {
   try {
     return JSON.stringify(obj, null, 2);
@@ -149,11 +175,11 @@ export default function Page() {
     const out: ReviewSuggestion[] = [];
     const baseDraft = activeDraft;
 
-    for (const [idx, edit] of (classification?.recommended_edits ?? []).entries()) {
+    for (const edit of (classification?.recommended_edits ?? [])) {
       const suggested = edit.replacement_texts?.[0];
       const current = getStatementText(baseDraft, edit.statement) ?? edit.statement.text;
-      const id = `structure-${idx}-${edit.statement.level}-${edit.statement.index}`;
       if (suggested) {
+        const id = buildSuggestionId("structure", edit.statement, current, suggested, edit.rationale);
         out.push({
           id,
           source: "structure",
@@ -166,23 +192,32 @@ export default function Page() {
         continue;
       }
       if (edit.action === "relabel" && edit.to_level) {
+        const relabelSuggestedText = `Move to ${edit.to_level}: ${current}`;
+        const id = buildSuggestionId("structure", edit.statement, current, relabelSuggestedText, edit.rationale);
         out.push({
           id,
           source: "structure",
           severity: "warn",
           target: edit.statement,
           currentText: current,
-          suggestedText: `Move to ${edit.to_level}: ${current}`,
+          suggestedText: relabelSuggestedText,
           rationale: edit.rationale,
           relabelToLevel: edit.to_level,
         });
       }
     }
 
-    for (const [idx, suggestion] of (causalLogic?.rewrite_suggestions ?? []).entries()) {
+    for (const suggestion of (causalLogic?.rewrite_suggestions ?? [])) {
       const current = getStatementText(baseDraft, suggestion.target) ?? suggestion.target.text;
+      const id = buildSuggestionId(
+        "causal",
+        suggestion.target,
+        current,
+        suggestion.suggested_text,
+        suggestion.rationale
+      );
       out.push({
-        id: `causal-${idx}-${suggestion.target.level}-${suggestion.target.index}`,
+        id,
         source: "causal",
         severity: "warn",
         target: suggestion.target,
