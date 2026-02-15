@@ -11,6 +11,6 @@ services:
       - key: OPENAI_API_KEY
         sync: false
       - key: OBJECTIVE_CHECK_MODE
-        value: heuristic
+        value: hybrid
       - key: CORS_ALLOW_ORIGINS
         sync: false
