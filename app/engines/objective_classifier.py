@@ -1,5 +1,9 @@
 import re
+import os
+import json
 from typing import Tuple, List, Dict
+from openai import OpenAI
+from app.prompts import SYSTEM_PROMPT_OBJECTIVE_REVIEW, USER_PROMPT_OBJECTIVE_REVIEW
 from app.schemas import (
     ObjectiveClassifierPolicy,
     ObjectiveClassifierInput,
@@ -13,6 +17,8 @@ from app.schemas import (
     EditAction,
     IntegrityScores,
 )
+
+client = OpenAI()
 
 # Heuristic dictionaries (tune over time)
 ACTIVITY_TERMS = {
@@ -28,6 +34,13 @@ RESULT_TERMS = {
 VAGUE_TERMS = {"better","good","nice","optimize","enhance","great","solid"}
 APPROVAL_TERMS = {"approve", "approved", "approval", "signoff", "sign-off", "accepted", "acceptance", "buy-in"}
 REVIEW_TERMS = {"review", "reviewed", "present", "presented", "demo", "demos", "evaluate", "evaluated"}
+
+
+def _objective_mode() -> str:
+    mode = (os.getenv("OBJECTIVE_CHECK_MODE") or "heuristic").strip().lower()
+    if mode not in {"heuristic", "hybrid", "llm"}:
+        return "heuristic"
+    return mode
 
 def _has_any(text: str, terms: set[str]) -> bool:
     t = (text or "").lower()
@@ -78,9 +91,72 @@ def _normalize_for_dupe(text: str) -> str:
     return t
 
 
+def _is_ambiguous_outcome(sig: Dict[str, float]) -> bool:
+    return abs(sig["activity"] - sig["result"]) <= 0.06 or max(sig["activity"], sig["result"]) < 0.12
+
+
+def _review_outcomes_with_llm(outcomes: List[str]) -> Dict[int, Dict[str, float | bool]]:
+    if not outcomes:
+        return {}
+    payload = [{"index": i, "text": t} for i, t in enumerate(outcomes)]
+    resp = client.chat.completions.create(
+        model="gpt-4.1-mini",
+        temperature=0,
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT_OBJECTIVE_REVIEW},
+            {"role": "user", "content": USER_PROMPT_OBJECTIVE_REVIEW.format(outcomes_json=json.dumps(payload, indent=2))},
+        ],
+    )
+    content = resp.choices[0].message.content
+    data = json.loads(content)
+    items = data.get("outcomes", [])
+    out: Dict[int, Dict[str, float | bool]] = {}
+    for item in items:
+        idx = item.get("index")
+        if isinstance(idx, int):
+            out[idx] = {
+                "is_activity_like": bool(item.get("is_activity_like", False)),
+                "is_vague": bool(item.get("is_vague", False)),
+                "is_measurable": bool(item.get("is_measurable", True)),
+                "confidence": float(item.get("confidence", 0.7)),
+            }
+    return out
+
+
 def objective_classifier_engine(payload: ObjectiveClassifierInput) -> ObjectiveClassifierOutput:
     lfo = payload.lfo
     policy = payload.policy
+    mode = _objective_mode()
+
+    outcome_signals: Dict[int, Dict[str, float]] = {}
+    for i, text in enumerate(lfo.outcomes):
+        t = (text or "").strip()
+        if t:
+            outcome_signals[i] = _signal_scores(t)
+
+    llm_outcome_reviews: Dict[int, Dict[str, float | bool]] = {}
+    try:
+        if mode == "llm":
+            llm_outcome_reviews = _review_outcomes_with_llm(lfo.outcomes)
+        elif mode == "hybrid":
+            candidate_indices = []
+            for i, t in enumerate(lfo.outcomes):
+                sig = outcome_signals.get(i) or {}
+                heuristic_vague = policy.flag_vague_outcomes and sig.get("vague", 0.0) >= 0.08 and not _measurable_hint(t)
+                heuristic_not_measurable = policy.flag_not_measurable_outcomes and sig.get("result", 0.0) >= 0.05 and not _measurable_hint(t)
+                likely_input = _likely_level(sig, policy) == "input" if sig else False
+                if _is_ambiguous_outcome(sig) or heuristic_vague or heuristic_not_measurable or likely_input:
+                    candidate_indices.append(i)
+            if candidate_indices:
+                candidate_outcomes = [lfo.outcomes[i] for i in candidate_indices]
+                reviewed = _review_outcomes_with_llm(candidate_outcomes)
+                # Remap local candidate index -> original outcome index
+                for local_idx, original_idx in enumerate(candidate_indices):
+                    if local_idx in reviewed:
+                        llm_outcome_reviews[original_idx] = reviewed[local_idx]
+    except Exception:
+        # LLM is best-effort in hybrid/llm mode; fallback to heuristic behavior.
+        llm_outcome_reviews = {}
 
     findings: List[Finding] = []
     edits: List[RecommendedEdit] = []
@@ -126,7 +202,8 @@ def objective_classifier_engine(payload: ObjectiveClassifierInput) -> ObjectiveC
         t = (text or "").strip()
         if not t:
             continue
-        sig = _signal_scores(t)
+        sig = outcome_signals.get(i) or _signal_scores(t)
+        llm_review = llm_outcome_reviews.get(i)
 
         # NEW: approval/review combo → force split, not relabel
         if _approval_split_needed(t):
@@ -155,26 +232,58 @@ def objective_classifier_engine(payload: ObjectiveClassifierInput) -> ObjectiveC
 
         likely = _likely_level(sig, policy)
 
-        if likely == "input" and not policy.allow_deliverable_as_outcome:
+        outcome_as_input = likely == "input" and not policy.allow_deliverable_as_outcome
+        if llm_review is not None:
+            llm_activity_like = bool(llm_review.get("is_activity_like", False))
+            if mode == "llm":
+                outcome_as_input = llm_activity_like and not policy.allow_deliverable_as_outcome
+            elif mode == "hybrid":
+                outcome_as_input = outcome_as_input and llm_activity_like
+
+        if outcome_as_input:
+            evidence = dict(sig)
+            if llm_review is not None:
+                evidence["llm_confidence"] = float(llm_review.get("confidence", 0.7))
             add_finding("outcome", i, t, "OUTCOME_AS_INPUT", "warn",
                         "This reads like an activity/deliverable (input) but is listed as an outcome.",
-                        sig)
+                        evidence)
             add_edit("outcome", i, t, "relabel",
                      to_level="input",
                      rationale="Move activity/deliverable statements to Inputs.")
         else:
-            if policy.flag_vague_outcomes and sig["vague"] >= 0.08 and not _measurable_hint(t):
+            is_vague = policy.flag_vague_outcomes and sig["vague"] >= 0.08 and not _measurable_hint(t)
+            if llm_review is not None and mode in {"hybrid", "llm"}:
+                if mode == "llm":
+                    is_vague = policy.flag_vague_outcomes and bool(llm_review.get("is_vague", False))
+                else:
+                    is_vague = is_vague and bool(llm_review.get("is_vague", False))
+
+            if is_vague:
+                evidence = dict(sig)
+                if llm_review is not None:
+                    evidence["llm_confidence"] = float(llm_review.get("confidence", 0.7))
                 add_finding("outcome", i, t, "VAGUE_STATEMENT", "warn",
                             "Outcome is vague; add specificity or evidence.",
-                            sig)
+                            evidence)
                 add_edit("outcome", i, t, "rewrite",
                          rationale="Add acceptance criteria / observable evidence.",
                          replacement_texts=[f"{t} (with acceptance criteria)"])
 
-            if policy.flag_not_measurable_outcomes and (sig["result"] >= 0.05) and not _measurable_hint(t):
+            not_measurable = policy.flag_not_measurable_outcomes and (sig["result"] >= 0.05) and not _measurable_hint(t)
+            if llm_review is not None and mode in {"hybrid", "llm"}:
+                llm_not_measurable = not bool(llm_review.get("is_measurable", True))
+                if mode == "llm":
+                    not_measurable = policy.flag_not_measurable_outcomes and llm_not_measurable
+                else:
+                    not_measurable = not_measurable and llm_not_measurable
+
+            if not_measurable:
+                evidence = dict(sig)
+                if llm_review is not None:
+                    evidence["llm_confidence"] = float(llm_review.get("confidence", 0.7))
                 add_finding("outcome", i, t, "NOT_MEASURABLE", "warn",
                             "Outcome reads like a result but lacks measurable/observable condition.",
-                            sig)
+                            evidence)
                 add_edit("outcome", i, t, "rewrite",
                          rationale="Make it testable: who approves, what metric, what evidence.",
                          replacement_texts=[f"{t} (measured by ...)"])

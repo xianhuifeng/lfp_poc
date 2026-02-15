@@ -230,6 +230,20 @@ pip install --upgrade pip
 export OPENAI_API_KEY=your_api_key_here
 ```
 
+Optional (Objective Classifier mode):
+
+```bash
+export OBJECTIVE_CHECK_MODE=hybrid
+```
+
+Supported values:
+
+* `heuristic` (default)
+* `hybrid`
+* `llm`
+
+Set this in the same terminal session where you run `uvicorn`. If the server is already running, restart it after changing the value.
+
 ### 3. Install dependencies
 
 With Poetry:

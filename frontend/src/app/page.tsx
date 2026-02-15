@@ -17,7 +17,13 @@ import {
 type ApiResult = DraftResponse | RefineResponse;
 type SuggestionStatus = "pending" | "applied" | "dismissed";
 type SuggestionSource = "structure" | "causal" | "amendment";
-type AmendmentHistoryItem = { text: string; createdAt: string; count: number };
+type AmendmentHistoryItem = {
+  id: string;
+  text: string;
+  createdAt: string;
+  totalSuggestions: number;
+  suggestionIds: string[];
+};
 
 type ReviewSuggestion = {
   id: string;
@@ -27,6 +33,7 @@ type ReviewSuggestion = {
   currentText: string;
   suggestedText: string;
   rationale: string;
+  confidence?: number;
 };
 
 function pretty(obj: any) {
@@ -148,6 +155,7 @@ export default function Page() {
         currentText: current,
         suggestedText: suggestion.suggested_text,
         rationale: suggestion.rationale,
+        confidence: suggestion.confidence,
       });
     }
 
@@ -213,14 +221,25 @@ export default function Page() {
     setLoading(true);
     setError(null);
     try {
+      const batchId = `amd-${Date.now()}`;
       const out = await api.amendDraft({
         raw_text: rawText,
         amendment_text: text,
         draft_lfo: activeDraft,
       });
-      setAmendmentSuggestions(out.suggestions);
+      const suggestionsWithBatch = out.suggestions.map((s) => ({
+        ...s,
+        id: `${batchId}:${s.id}`,
+      }));
+      setAmendmentSuggestions(suggestionsWithBatch);
       setAmendmentHistory((prev) => [
-        { text, createdAt: new Date().toISOString(), count: out.suggestions.length },
+        {
+          id: batchId,
+          text,
+          createdAt: new Date().toISOString(),
+          totalSuggestions: suggestionsWithBatch.length,
+          suggestionIds: suggestionsWithBatch.map((s) => s.id),
+        },
         ...prev,
       ].slice(0, 8));
     } catch (e: any) {
@@ -453,8 +472,22 @@ export default function Page() {
                 </button>
               </div>
               {amendmentHistory.length > 0 && (
-                <div style={{ marginTop: 8, fontSize: 12, opacity: 0.75 }}>
-                  Last amendment: {amendmentHistory[0].count} suggestion(s) generated.
+                <div style={{ marginTop: 10 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6 }}>Amendment history</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {amendmentHistory.map((item) => {
+                      const applied = item.suggestionIds.filter((id) => suggestionStatus[id] === "applied").length;
+                      const preview = item.text.length > 100 ? `${item.text.slice(0, 100)}...` : item.text;
+                      return (
+                        <div key={item.id} style={{ border: "1px solid #eee", borderRadius: 8, padding: 8, fontSize: 12 }}>
+                          <div style={{ opacity: 0.8 }}>{preview}</div>
+                          <div style={{ marginTop: 4, opacity: 0.7 }}>
+                            Applied {applied}/{item.totalSuggestions} • {new Date(item.createdAt).toLocaleTimeString()}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               )}
             </div>
@@ -688,6 +721,11 @@ export default function Page() {
                           <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 4 }}>
                             {s.source} • {s.target.level}[{s.target.index}]
                           </div>
+                          {typeof s.confidence === "number" && (
+                            <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 4 }}>
+                              confidence: <b>{s.confidence.toFixed(2)}</b>
+                            </div>
+                          )}
                           <div style={{ fontSize: 12, color: "#b42318", background: "#fef3f2", border: "1px solid #fecaca", borderRadius: 6, padding: 6 }}>
                             - {s.currentText}
                           </div>

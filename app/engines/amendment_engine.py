@@ -1,28 +1,32 @@
+import json
 import re
-from typing import List, Tuple
+from typing import List
 
+from openai import OpenAI
+
+from app.prompts import SYSTEM_PROMPT_AMEND, USER_PROMPT_AMEND
 from app.schemas import (
     AmendmentDraftInput,
     AmendmentDraftOutput,
     AmendmentSuggestion,
-    LfoLevel,
+    DraftLogFrame,
     StatementRef,
 )
 
-INPUT_HINTS = {
-    "train", "build", "create", "conduct", "hire", "budget", "tool", "system",
-    "process", "document", "review", "meeting", "workflow", "resource",
-}
-OUTCOME_HINTS = {
-    "increase", "decrease", "reduce", "improve", "faster", "slower", "adopt",
-    "approved", "quality", "within", "kpi", "%", "metric", "target",
-}
-GOAL_HINTS = {"impact", "long-term", "organization", "system-wide", "community", "national"}
+client = OpenAI()
 
 
-def _split_sentences(text: str) -> List[str]:
-    chunks = re.split(r"[.\n;]+", text or "")
-    return [c.strip() for c in chunks if c.strip()]
+def _clamp_list(values: List[str], max_items: int = 5) -> List[str]:
+    if not isinstance(values, list):
+        return []
+    return values[:max_items]
+
+
+def _sanitize_amended_draft(data: dict) -> dict:
+    # Keep the same cardinality constraints as the rest of the app.
+    data["outcomes"] = _clamp_list(data.get("outcomes", []), 5)
+    data["inputs"] = _clamp_list(data.get("inputs", []), 5)
+    return data
 
 
 def _tokens(text: str) -> set[str]:
@@ -40,64 +44,110 @@ def _jaccard(a: str, b: str) -> float:
     return len(ta & tb) / len(union)
 
 
-def _guess_level(sentence: str) -> LfoLevel:
-    s = sentence.lower()
-    if any(h in s for h in GOAL_HINTS):
-        return "goal"
-    if any(h in s for h in INPUT_HINTS):
-        return "input"
-    if any(h in s for h in OUTCOME_HINTS):
-        return "outcome"
-    return "purpose"
+def _suggestion_confidence(amendment_text: str, current_text: str, suggested_text: str) -> float:
+    # Blend amendment relevance + actual change magnitude.
+    amend_overlap = _jaccard(amendment_text, suggested_text)
+    change_magnitude = 1.0 - _jaccard(current_text, suggested_text)
+    score = 0.25 + (0.55 * amend_overlap) + (0.20 * change_magnitude)
+    return round(max(0.0, min(1.0, score)), 3)
 
 
-def _best_target(payload: AmendmentDraftInput, sentence: str) -> Tuple[LfoLevel, int, str]:
-    lfo = payload.draft_lfo
-    candidates: List[Tuple[LfoLevel, int, str]] = [
-        ("goal", 0, lfo.goal),
-        ("purpose", 0, lfo.purpose),
-    ]
-    candidates += [("outcome", i, t) for i, t in enumerate(lfo.outcomes)]
-    candidates += [("input", i, t) for i, t in enumerate(lfo.inputs)]
+def _propose_amended_draft_with_llm(payload: AmendmentDraftInput) -> DraftLogFrame:
+    draft_json = payload.draft_lfo.model_dump_json(indent=2)
+    raw_text = payload.raw_text or ""
+    resp = client.chat.completions.create(
+        model="gpt-4.1-mini",
+        temperature=0,
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT_AMEND},
+            {
+                "role": "user",
+                "content": USER_PROMPT_AMEND.format(
+                    raw_text=raw_text,
+                    draft_json=draft_json,
+                    amendment_text=payload.amendment_text,
+                ),
+            },
+        ],
+    )
 
-    guessed = _guess_level(sentence)
-    scored = []
-    for level, idx, text in candidates:
-        score = _jaccard(sentence, text)
-        if level == guessed:
-            score += 0.15
-        scored.append((score, level, idx, text))
-    scored.sort(key=lambda x: x[0], reverse=True)
-    _, level, idx, text = scored[0]
-    return level, idx, text
+    content = resp.choices[0].message.content
+    try:
+        data = json.loads(content)
+        data = _sanitize_amended_draft(data)
+        return DraftLogFrame(**data)
+    except Exception as e:
+        raise ValueError(f"Invalid amendment JSON: {e}\nRaw output:\n{content}")
 
 
-def _merge_text(current_text: str, amendment_sentence: str) -> str:
-    current = (current_text or "").strip()
-    amend = amendment_sentence.strip()
-    if not current:
-        return amend
-    if amend.lower() in current.lower():
-        return current
-    joiner = " " if current.endswith((".", "!", "?")) else ". "
-    return f"{current}{joiner}{amend}"
+def _diff_to_suggestions(current: DraftLogFrame, amended: DraftLogFrame, amendment_text: str) -> List[AmendmentSuggestion]:
+    suggestions: List[AmendmentSuggestion] = []
+    suggestion_idx = 0
+
+    if current.goal.strip() != amended.goal.strip():
+        suggestions.append(
+            AmendmentSuggestion(
+                id=f"amd-goal-{suggestion_idx}",
+                target=StatementRef(level="goal", index=0, text=current.goal),
+                current_text=current.goal,
+                suggested_text=amended.goal,
+                rationale="Amendment updates the goal statement.",
+                safe_to_apply=True,
+                confidence=_suggestion_confidence(amendment_text, current.goal, amended.goal),
+            )
+        )
+        suggestion_idx += 1
+
+    if current.purpose.strip() != amended.purpose.strip():
+        suggestions.append(
+            AmendmentSuggestion(
+                id=f"amd-purpose-{suggestion_idx}",
+                target=StatementRef(level="purpose", index=0, text=current.purpose),
+                current_text=current.purpose,
+                suggested_text=amended.purpose,
+                rationale="Amendment updates the purpose statement.",
+                safe_to_apply=True,
+                confidence=_suggestion_confidence(amendment_text, current.purpose, amended.purpose),
+            )
+        )
+        suggestion_idx += 1
+
+    max_outcomes = min(len(current.outcomes), len(amended.outcomes))
+    for i in range(max_outcomes):
+        if current.outcomes[i].strip() != amended.outcomes[i].strip():
+            suggestions.append(
+                AmendmentSuggestion(
+                    id=f"amd-outcome-{i}-{suggestion_idx}",
+                    target=StatementRef(level="outcome", index=i, text=current.outcomes[i]),
+                    current_text=current.outcomes[i],
+                    suggested_text=amended.outcomes[i],
+                    rationale="Amendment updates this outcome.",
+                    safe_to_apply=True,
+                    confidence=_suggestion_confidence(amendment_text, current.outcomes[i], amended.outcomes[i]),
+                )
+            )
+            suggestion_idx += 1
+
+    max_inputs = min(len(current.inputs), len(amended.inputs))
+    for i in range(max_inputs):
+        if current.inputs[i].strip() != amended.inputs[i].strip():
+            suggestions.append(
+                AmendmentSuggestion(
+                    id=f"amd-input-{i}-{suggestion_idx}",
+                    target=StatementRef(level="input", index=i, text=current.inputs[i]),
+                    current_text=current.inputs[i],
+                    suggested_text=amended.inputs[i],
+                    rationale="Amendment updates this input.",
+                    safe_to_apply=True,
+                    confidence=_suggestion_confidence(amendment_text, current.inputs[i], amended.inputs[i]),
+                )
+            )
+            suggestion_idx += 1
+
+    return suggestions
 
 
 def propose_amendment_suggestions(payload: AmendmentDraftInput) -> AmendmentDraftOutput:
-    sentences = _split_sentences(payload.amendment_text)
-    suggestions: List[AmendmentSuggestion] = []
-
-    for i, sentence in enumerate(sentences):
-        level, idx, current_text = _best_target(payload, sentence)
-        suggestions.append(
-            AmendmentSuggestion(
-                id=f"amd-{level}-{idx}-{i}",
-                target=StatementRef(level=level, index=idx, text=current_text),
-                current_text=current_text,
-                suggested_text=_merge_text(current_text, sentence),
-                rationale="Amendment suggests updating this statement to reflect new context.",
-                safe_to_apply=True,
-            )
-        )
-
+    amended = _propose_amended_draft_with_llm(payload)
+    suggestions = _diff_to_suggestions(payload.draft_lfo, amended, payload.amendment_text)
     return AmendmentDraftOutput(suggestions=suggestions)

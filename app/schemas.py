@@ -303,6 +303,7 @@ class AmendmentSuggestion(BaseModel):
     suggested_text: str
     rationale: str
     safe_to_apply: bool = True
+    confidence: float = Field(default=0.7, ge=0.0, le=1.0)
 
 
 class AmendmentDraftInput(BaseModel):

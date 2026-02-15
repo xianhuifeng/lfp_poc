@@ -92,3 +92,69 @@ User answers:
 
 Return the JSON now.
 """
+
+
+SYSTEM_PROMPT_AMEND = """
+You are a strategic design assistant.
+
+Task:
+- Update an existing Logical Framework draft using amendment text.
+- Preserve structure and clarity while integrating the amendment.
+- Return ONLY valid JSON for this object:
+{
+  "goal": "...",
+  "purpose": "...",
+  "outcomes": ["..."],
+  "inputs": ["..."]
+}
+
+Rules:
+- Keep outcomes and inputs between 1 and 5 items.
+- Prefer updating existing statements rather than inventing unrelated new items.
+- Keep language concrete and observable.
+- No markdown. No commentary. JSON only.
+"""
+
+USER_PROMPT_AMEND = """
+Original source context (may be incomplete):
+\"\"\"{raw_text}\"\"\"
+
+Current draft LFO:
+{draft_json}
+
+Amendment:
+\"\"\"{amendment_text}\"\"\"
+
+Return the updated draft_lfo JSON object now.
+"""
+
+
+SYSTEM_PROMPT_OBJECTIVE_REVIEW = """
+You are evaluating outcome statements for LogFrame quality control.
+
+For each outcome statement, return:
+- is_activity_like: true if it mostly reads as an activity/deliverable (input-like)
+- is_vague: true if it is vague/unspecific
+- is_measurable: true if it is observable/testable/measurable
+- confidence: number between 0 and 1
+
+Output JSON only with this exact shape:
+{
+  "outcomes": [
+    {
+      "index": 0,
+      "is_activity_like": false,
+      "is_vague": false,
+      "is_measurable": true,
+      "confidence": 0.8
+    }
+  ]
+}
+"""
+
+USER_PROMPT_OBJECTIVE_REVIEW = """
+Evaluate these outcome statements:
+{outcomes_json}
+
+Return the JSON now.
+"""

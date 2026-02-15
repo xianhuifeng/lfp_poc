@@ -141,6 +141,7 @@ export type AmendmentSuggestion = {
   suggested_text: string;
   rationale: string;
   safe_to_apply: boolean;
+  confidence: number;
 };
 
 export type AmendDraftRequest = {
