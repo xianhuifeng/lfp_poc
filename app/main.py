@@ -26,6 +26,8 @@ from app.schemas import (
     ObjectiveClassifierResponse,
     CausalLogicRequest,
     CausalLogicResponse,
+    AmendDraftRequest,
+    AmendDraftResponse,
 )
 from app.orchestrator import (
     run_pipeline,
@@ -33,6 +35,7 @@ from app.orchestrator import (
     run_refine,
     run_objective_classifier,
     run_causal_logic,
+    run_amend_draft,
 )
 
 
@@ -77,3 +80,15 @@ def causal_logic_endpoint(req: CausalLogicRequest):
         policy=req.policy,
     )
     return CausalLogicResponse(analysis=analysis)
+
+
+@app.post("/amend-draft", response_model=AmendDraftResponse)
+def amend_draft_endpoint(req: AmendDraftRequest):
+    out = run_amend_draft(
+        raw_text=req.raw_text,
+        amendment_text=req.amendment_text,
+        draft_lfo=req.draft_lfo,
+        context=req.context,
+        policy=req.policy,
+    )
+    return AmendDraftResponse(suggestions=out.suggestions)

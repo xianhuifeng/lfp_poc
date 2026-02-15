@@ -9,12 +9,15 @@ from app.schemas import (
     ObjectiveClassifierOutput,
     CausalLogicInput,
     CausalLogicOutput,
+    AmendmentDraftInput,
+    AmendmentDraftOutput,
 )
 from app.engines.intake_preprocess import preprocess
 from app.engines.structure_drafting import structure_draft, refine_draft
 from app.engines.clarification_manager import clarification_manager
 from app.engines.objective_classifier import objective_classifier_engine
 from app.engines.causal_logic_engine import causal_logic_engine
+from app.engines.amendment_engine import propose_amendment_suggestions
 
 # Helper function to run the pipeline
 def run_pipeline(raw_text: str) -> DraftResponse:
@@ -124,3 +127,20 @@ def run_causal_logic(
         policy=policy or {},
     )
     return causal_logic_engine(payload)
+
+
+def run_amend_draft(
+    raw_text,
+    amendment_text,
+    draft_lfo,
+    context=None,
+    policy=None,
+) -> AmendmentDraftOutput:
+    payload = AmendmentDraftInput(
+        raw_text=raw_text,
+        amendment_text=amendment_text,
+        draft_lfo=draft_lfo,
+        context=context,
+        policy=policy,
+    )
+    return propose_amendment_suggestions(payload)

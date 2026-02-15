@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import {
   api,
+  type AmendmentSuggestion,
   type ClarificationQuestion,
   type StatementRef,
   type DraftLogFrame,
@@ -15,7 +16,8 @@ import {
 
 type ApiResult = DraftResponse | RefineResponse;
 type SuggestionStatus = "pending" | "applied" | "dismissed";
-type SuggestionSource = "structure" | "causal";
+type SuggestionSource = "structure" | "causal" | "amendment";
+type AmendmentHistoryItem = { text: string; createdAt: string; count: number };
 
 type ReviewSuggestion = {
   id: string;
@@ -42,6 +44,10 @@ export default function Page() {
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [sourceLocked, setSourceLocked] = useState(false);
+  const [amendmentText, setAmendmentText] = useState("");
+  const [amendmentSuggestions, setAmendmentSuggestions] = useState<AmendmentSuggestion[]>([]);
+  const [amendmentHistory, setAmendmentHistory] = useState<AmendmentHistoryItem[]>([]);
 
   const [result, setResult] = useState<ApiResult | null>(null);
   const [editableDraft, setEditableDraft] = useState<DraftLogFrame | null>(null);
@@ -132,8 +138,21 @@ export default function Page() {
       });
     }
 
+    for (const suggestion of amendmentSuggestions) {
+      const current = getStatementText(baseDraft, suggestion.target) ?? suggestion.current_text;
+      out.push({
+        id: suggestion.id,
+        source: "amendment",
+        severity: "warn",
+        target: suggestion.target,
+        currentText: current,
+        suggestedText: suggestion.suggested_text,
+        rationale: suggestion.rationale,
+      });
+    }
+
     return out;
-  }, [classification, causalLogic, activeDraft]);
+  }, [classification, causalLogic, amendmentSuggestions, activeDraft]);
 
   const pendingSuggestions = reviewSuggestions.filter((s) => (suggestionStatus[s.id] ?? "pending") === "pending");
 
@@ -173,6 +192,44 @@ export default function Page() {
     setSuggestionStatus((prev) => ({ ...prev, [suggestion.id]: "dismissed" }));
   }
 
+  function startNewInitiative() {
+    setResult(null);
+    setEditableDraft(null);
+    setSuggestionStatus({});
+    setAnswers({});
+    setClassification(null);
+    setCausalLogic(null);
+    setError(null);
+    setSourceLocked(false);
+    setAmendmentText("");
+    setAmendmentSuggestions([]);
+    setAmendmentHistory([]);
+  }
+
+  async function onGenerateAmendmentSuggestions() {
+    if (!activeDraft) return;
+    const text = amendmentText.trim();
+    if (!text) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const out = await api.amendDraft({
+        raw_text: rawText,
+        amendment_text: text,
+        draft_lfo: activeDraft,
+      });
+      setAmendmentSuggestions(out.suggestions);
+      setAmendmentHistory((prev) => [
+        { text, createdAt: new Date().toISOString(), count: out.suggestions.length },
+        ...prev,
+      ].slice(0, 8));
+    } catch (e: any) {
+      setError(e?.message ?? String(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
 
   // reset answers when new questions appear (but keep existing if ids overlap)
   useMemo(() => {
@@ -198,10 +255,12 @@ export default function Page() {
       const r = await api.draft(rawText);
       setResult(r);
       setSuggestionStatus({});
+      setAmendmentSuggestions([]);
 
       // classify objectives after generating a draft
       const lfo = (r as any)?.drafting?.draft_lfo;
       if (lfo) {
+        setSourceLocked(true);
         setEditableDraft(lfo);
         await runChecksForDraft(lfo);
       }
@@ -233,6 +292,7 @@ export default function Page() {
       });
       setResult(r);
       setSuggestionStatus({});
+      setAmendmentSuggestions([]);
 
       // classify objectives after refining the draft
       const lfo = (r as any)?.drafting?.draft_lfo;
@@ -273,6 +333,15 @@ export default function Page() {
           title="Re-run structure and causal checks for the current draft"
         >
           Re-run checks
+        </button>
+
+        <button
+          onClick={startNewInitiative}
+          disabled={loading || !sourceLocked}
+          style={btnStyle}
+          title="Start a new initiative and unlock the source paragraph"
+        >
+          Start new initiative
         </button>
 
         {drafting?.confidence !== undefined && (
@@ -328,6 +397,7 @@ export default function Page() {
           <textarea
             value={rawText}
             onChange={(e) => setRawText(e.target.value)}
+            disabled={sourceLocked}
             rows={14}
             style={{
               width: "100%",
@@ -336,11 +406,59 @@ export default function Page() {
               padding: 10,
               fontSize: 14,
               resize: "vertical",
+              background: sourceLocked ? "#f7f7f7" : "white",
+              opacity: sourceLocked ? 0.85 : 1,
             }}
           />
           <div style={{ marginTop: 10, fontSize: 12, opacity: 0.75 }}>
-            Tip: include who/where/why + any metrics or timeframe you already know.
+            {sourceLocked
+              ? "Source is locked after first draft generation. Continue by refining the LogFrame, or click 'Start new initiative' to unlock and begin a fresh run."
+              : "Tip: include who/where/why + any metrics or timeframe you already know."}
           </div>
+          {sourceLocked && (
+            <div style={{ marginTop: 12, padding: 10, border: "1px solid #eee", borderRadius: 8, background: "#fcfcfc" }}>
+              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>Propose amendment</div>
+              <textarea
+                value={amendmentText}
+                onChange={(e) => setAmendmentText(e.target.value)}
+                placeholder="What changed since original brief? e.g. timeline shortened to 8 weeks, new approver added..."
+                rows={5}
+                style={{
+                  width: "100%",
+                  borderRadius: 8,
+                  border: "1px solid #ddd",
+                  padding: 10,
+                  fontSize: 13,
+                  resize: "vertical",
+                }}
+              />
+              <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
+                <button
+                  style={btnStyle}
+                  onClick={onGenerateAmendmentSuggestions}
+                  disabled={loading || !activeDraft || !amendmentText.trim()}
+                  title="Generate targeted rewrite suggestions from amendment text"
+                >
+                  Generate amendment suggestions
+                </button>
+                <button
+                  style={btnStyle}
+                  onClick={() => {
+                    setAmendmentText("");
+                    setAmendmentSuggestions([]);
+                  }}
+                  disabled={loading || (!amendmentText && amendmentSuggestions.length === 0)}
+                >
+                  Clear
+                </button>
+              </div>
+              {amendmentHistory.length > 0 && (
+                <div style={{ marginTop: 8, fontSize: 12, opacity: 0.75 }}>
+                  Last amendment: {amendmentHistory[0].count} suggestion(s) generated.
+                </div>
+              )}
+            </div>
+          )}
         </section>
 
         {/* Questions */}
@@ -613,7 +731,7 @@ export default function Page() {
       </div>
 
       <div style={{ marginTop: 14, fontSize: 12, opacity: 0.7 }}>
-        Backend endpoints used: <code>/draft</code>, <code>/refine</code>, <code>/classify-objectives</code>, and <code>/causal-logic</code>.
+        Backend endpoints used: <code>/draft</code>, <code>/refine</code>, <code>/classify-objectives</code>, <code>/causal-logic</code>, and <code>/amend-draft</code>.
       </div>
     </main>
   );
