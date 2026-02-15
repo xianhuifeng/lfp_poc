@@ -34,6 +34,7 @@ type ReviewSuggestion = {
   suggestedText: string;
   rationale: string;
   confidence?: number;
+  relabelToLevel?: "goal" | "purpose" | "outcome" | "input";
 };
 
 function pretty(obj: any) {
@@ -113,23 +114,69 @@ export default function Page() {
     return null;
   }
 
+  function applyRelabelToDraft(
+    draft: DraftLogFrame,
+    target: StatementRef,
+    toLevel: "goal" | "purpose" | "outcome" | "input"
+  ): DraftLogFrame | null {
+    const next: DraftLogFrame = {
+      ...draft,
+      outcomes: [...(draft.outcomes ?? [])],
+      inputs: [...(draft.inputs ?? [])],
+    };
+
+    // v1 supports list-level relabels only (outcome <-> input).
+    if (target.level === "outcome" && toLevel === "input") {
+      if (target.index < 0 || target.index >= next.outcomes.length) return null;
+      if (next.outcomes.length <= 1 || next.inputs.length >= 5) return null;
+      const [moved] = next.outcomes.splice(target.index, 1);
+      next.inputs.push(moved);
+      return next;
+    }
+
+    if (target.level === "input" && toLevel === "outcome") {
+      if (target.index < 0 || target.index >= next.inputs.length) return null;
+      if (next.inputs.length <= 1 || next.outcomes.length >= 5) return null;
+      const [moved] = next.inputs.splice(target.index, 1);
+      next.outcomes.push(moved);
+      return next;
+    }
+
+    return null;
+  }
+
   const reviewSuggestions: ReviewSuggestion[] = useMemo(() => {
     const out: ReviewSuggestion[] = [];
     const baseDraft = activeDraft;
 
     for (const [idx, edit] of (classification?.recommended_edits ?? []).entries()) {
       const suggested = edit.replacement_texts?.[0];
-      if (!suggested) continue; // v1: only rewrite-like suggestions with a single preview text
       const current = getStatementText(baseDraft, edit.statement) ?? edit.statement.text;
-      out.push({
-        id: `structure-${idx}-${edit.statement.level}-${edit.statement.index}`,
-        source: "structure",
-        severity: "warn",
-        target: edit.statement,
-        currentText: current,
-        suggestedText: suggested,
-        rationale: edit.rationale,
-      });
+      const id = `structure-${idx}-${edit.statement.level}-${edit.statement.index}`;
+      if (suggested) {
+        out.push({
+          id,
+          source: "structure",
+          severity: "warn",
+          target: edit.statement,
+          currentText: current,
+          suggestedText: suggested,
+          rationale: edit.rationale,
+        });
+        continue;
+      }
+      if (edit.action === "relabel" && edit.to_level) {
+        out.push({
+          id,
+          source: "structure",
+          severity: "warn",
+          target: edit.statement,
+          currentText: current,
+          suggestedText: `Move to ${edit.to_level}: ${current}`,
+          rationale: edit.rationale,
+          relabelToLevel: edit.to_level,
+        });
+      }
     }
 
     for (const [idx, suggestion] of (causalLogic?.rewrite_suggestions ?? []).entries()) {
@@ -179,7 +226,7 @@ export default function Page() {
     }
   }
 
-  function keepSuggestion(suggestion: ReviewSuggestion) {
+  async function keepSuggestion(suggestion: ReviewSuggestion) {
     const base = activeDraft;
     if (!base) return;
     const latestCurrent = getStatementText(base, suggestion.target);
@@ -187,13 +234,17 @@ export default function Page() {
       setError("This suggestion is stale because the target text changed. Re-run checks first.");
       return;
     }
-    const updated = applyRewriteToDraft(base, suggestion.target, suggestion.suggestedText);
+    const updated = suggestion.relabelToLevel
+      ? applyRelabelToDraft(base, suggestion.target, suggestion.relabelToLevel)
+      : applyRewriteToDraft(base, suggestion.target, suggestion.suggestedText);
     if (!updated) {
-      setError("Unable to apply suggestion: invalid target location.");
+      setError("Unable to apply suggestion: invalid target or list limits reached (keep 1-5 outcomes/inputs).");
       return;
     }
     setEditableDraft(updated);
     setSuggestionStatus((prev) => ({ ...prev, [suggestion.id]: "applied" }));
+    // Re-run checks immediately so resolved warnings disappear from UI.
+    await runChecksForDraft(updated);
   }
 
   function cancelSuggestion(suggestion: ReviewSuggestion) {
@@ -717,7 +768,7 @@ export default function Page() {
                             <button style={btnStyle} onClick={() => cancelSuggestion(s)} disabled={loading}>
                               Cancel
                             </button>
-                            <button style={btnStyle} onClick={() => keepSuggestion(s)} disabled={loading}>
+                            <button style={btnStyle} onClick={() => { void keepSuggestion(s); }} disabled={loading}>
                               Keep
                             </button>
                           </div>
