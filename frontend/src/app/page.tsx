@@ -4,14 +4,28 @@ import { useMemo, useState } from "react";
 import {
   api,
   type ClarificationQuestion,
+  type StatementRef,
   type DraftLogFrame,
   type DraftResponse,
   type RefineResponse,
   type ObjectiveClassification,
   type CausalLogicAnalysis,
+  type Severity,
 } from "./apiClient";
 
 type ApiResult = DraftResponse | RefineResponse;
+type SuggestionStatus = "pending" | "applied" | "dismissed";
+type SuggestionSource = "structure" | "causal";
+
+type ReviewSuggestion = {
+  id: string;
+  source: SuggestionSource;
+  severity: Severity;
+  target: StatementRef;
+  currentText: string;
+  suggestedText: string;
+  rationale: string;
+};
 
 function pretty(obj: any) {
   try {
@@ -30,6 +44,8 @@ export default function Page() {
   const [error, setError] = useState<string | null>(null);
 
   const [result, setResult] = useState<ApiResult | null>(null);
+  const [editableDraft, setEditableDraft] = useState<DraftLogFrame | null>(null);
+  const [suggestionStatus, setSuggestionStatus] = useState<Record<string, SuggestionStatus>>({});
 
   // answers keyed by question id
   const [answers, setAnswers] = useState<Record<string, string>>({});
@@ -40,13 +56,122 @@ export default function Page() {
 
   const drafting = (result as any)?.drafting;
   const draftLfo: DraftLogFrame | null = drafting?.draft_lfo ?? null;
+  const activeDraft: DraftLogFrame | null = editableDraft ?? draftLfo;
 
   const clarification = (result as any)?.clarification ?? null;
   const questionSet: ClarificationQuestion[] = clarification?.question_set ?? [];
 
   const blocked = clarification?.next_action === "wait_for_user";
-  const hasErrors = (classification?.findings ?? []).some(f => f.severity === "error");
   const hasCausalErrors = (causalLogic?.findings ?? []).some(f => f.severity === "error");
+
+  function getStatementText(draft: DraftLogFrame | null, target: StatementRef): string | null {
+    if (!draft) return null;
+    if (target.level === "goal") return draft.goal ?? null;
+    if (target.level === "purpose") return draft.purpose ?? null;
+    if (target.level === "outcome") return draft.outcomes?.[target.index] ?? null;
+    if (target.level === "input") return draft.inputs?.[target.index] ?? null;
+    return null;
+  }
+
+  function applyRewriteToDraft(draft: DraftLogFrame, target: StatementRef, newText: string): DraftLogFrame | null {
+    const next: DraftLogFrame = {
+      ...draft,
+      outcomes: [...(draft.outcomes ?? [])],
+      inputs: [...(draft.inputs ?? [])],
+    };
+    if (target.level === "goal") {
+      next.goal = newText;
+      return next;
+    }
+    if (target.level === "purpose") {
+      next.purpose = newText;
+      return next;
+    }
+    if (target.level === "outcome") {
+      if (target.index < 0 || target.index >= next.outcomes.length) return null;
+      next.outcomes[target.index] = newText;
+      return next;
+    }
+    if (target.level === "input") {
+      if (target.index < 0 || target.index >= next.inputs.length) return null;
+      next.inputs[target.index] = newText;
+      return next;
+    }
+    return null;
+  }
+
+  const reviewSuggestions: ReviewSuggestion[] = useMemo(() => {
+    const out: ReviewSuggestion[] = [];
+    const baseDraft = activeDraft;
+
+    for (const [idx, edit] of (classification?.recommended_edits ?? []).entries()) {
+      const suggested = edit.replacement_texts?.[0];
+      if (!suggested) continue; // v1: only rewrite-like suggestions with a single preview text
+      const current = getStatementText(baseDraft, edit.statement) ?? edit.statement.text;
+      out.push({
+        id: `structure-${idx}-${edit.statement.level}-${edit.statement.index}`,
+        source: "structure",
+        severity: "warn",
+        target: edit.statement,
+        currentText: current,
+        suggestedText: suggested,
+        rationale: edit.rationale,
+      });
+    }
+
+    for (const [idx, suggestion] of (causalLogic?.rewrite_suggestions ?? []).entries()) {
+      const current = getStatementText(baseDraft, suggestion.target) ?? suggestion.target.text;
+      out.push({
+        id: `causal-${idx}-${suggestion.target.level}-${suggestion.target.index}`,
+        source: "causal",
+        severity: "warn",
+        target: suggestion.target,
+        currentText: current,
+        suggestedText: suggestion.suggested_text,
+        rationale: suggestion.rationale,
+      });
+    }
+
+    return out;
+  }, [classification, causalLogic, activeDraft]);
+
+  const pendingSuggestions = reviewSuggestions.filter((s) => (suggestionStatus[s.id] ?? "pending") === "pending");
+
+  async function runChecksForDraft(lfo: DraftLogFrame) {
+    try {
+      const res = await api.classifyObjectives({ lfo });
+      setClassification(res.classification);
+    } catch {
+      setClassification(null);
+    }
+    try {
+      const res = await api.analyzeCausalLogic({ lfo });
+      setCausalLogic(res.analysis);
+    } catch {
+      setCausalLogic(null);
+    }
+  }
+
+  function keepSuggestion(suggestion: ReviewSuggestion) {
+    const base = activeDraft;
+    if (!base) return;
+    const latestCurrent = getStatementText(base, suggestion.target);
+    if (latestCurrent !== null && latestCurrent !== suggestion.currentText) {
+      setError("This suggestion is stale because the target text changed. Re-run checks first.");
+      return;
+    }
+    const updated = applyRewriteToDraft(base, suggestion.target, suggestion.suggestedText);
+    if (!updated) {
+      setError("Unable to apply suggestion: invalid target location.");
+      return;
+    }
+    setEditableDraft(updated);
+    setSuggestionStatus((prev) => ({ ...prev, [suggestion.id]: "applied" }));
+  }
+
+  function cancelSuggestion(suggestion: ReviewSuggestion) {
+    setSuggestionStatus((prev) => ({ ...prev, [suggestion.id]: "dismissed" }));
+  }
 
 
   // reset answers when new questions appear (but keep existing if ids overlap)
@@ -72,24 +197,13 @@ export default function Page() {
     try {
       const r = await api.draft(rawText);
       setResult(r);
+      setSuggestionStatus({});
 
       // classify objectives after generating a draft
       const lfo = (r as any)?.drafting?.draft_lfo;
       if (lfo) {
-        try {
-          const res = await api.classifyObjectives({ lfo });
-          setClassification(res.classification);
-        } catch (e) {
-          // non-fatal; don't block UI
-          setClassification(null);
-        }
-        try {
-          const res = await api.analyzeCausalLogic({ lfo });
-          setCausalLogic(res.analysis);
-        } catch (e) {
-          // non-fatal; don't block UI
-          setCausalLogic(null);
-        }
+        setEditableDraft(lfo);
+        await runChecksForDraft(lfo);
       }
 
     } catch (e: any) {
@@ -100,7 +214,7 @@ export default function Page() {
   }
 
   async function onRefine() {
-    if (!draftLfo) return;
+    if (!activeDraft) return;
     setLoading(true);
     setError(null);
     try {
@@ -112,30 +226,19 @@ export default function Page() {
 
       const r = await api.refine({
         raw_text: rawText,
-        draft_lfo: draftLfo,
+        draft_lfo: activeDraft,
         question_set: questionSet,
         answers: compactAnswers,
         policy: { max_questions: 3, allow_proceed_with_assumptions: true },
       });
       setResult(r);
+      setSuggestionStatus({});
 
       // classify objectives after refining the draft
       const lfo = (r as any)?.drafting?.draft_lfo;
       if (lfo) {
-        try {
-          const res = await api.classifyObjectives({ lfo });
-          setClassification(res.classification);
-        } catch (e) {
-          // non-fatal; don't block UI
-          setClassification(null);
-        }
-        try {
-          const res = await api.analyzeCausalLogic({ lfo });
-          setCausalLogic(res.analysis);
-        } catch (e) {
-          // non-fatal; don't block UI
-          setCausalLogic(null);
-        }
+        setEditableDraft(lfo);
+        await runChecksForDraft(lfo);
       }
 
     } catch (e: any) {
@@ -156,11 +259,20 @@ export default function Page() {
 
         <button
           onClick={onRefine}
-          disabled={loading || !draftLfo || questionSet.length === 0}
+          disabled={loading || !activeDraft || questionSet.length === 0}
           style={btnStyle}
           title={questionSet.length === 0 ? "No questions to answer." : "Apply answers and refine draft"}
         >
           {loading ? "Working..." : "Refine with answers"}
+        </button>
+
+        <button
+          onClick={() => activeDraft && runChecksForDraft(activeDraft)}
+          disabled={loading || !activeDraft}
+          style={btnStyle}
+          title="Re-run structure and causal checks for the current draft"
+        >
+          Re-run checks
         </button>
 
         {drafting?.confidence !== undefined && (
@@ -440,6 +552,46 @@ export default function Page() {
                 </div>
               )}
 
+              {activeDraft && (
+                <div style={{ marginBottom: 10, padding: 10, border: "1px solid #eee", borderRadius: 10, background: "#fbfbfb" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <div style={{ fontWeight: 700 }}>Suggestion review</div>
+                    <div style={{ fontSize: 12, opacity: 0.8 }}>
+                      Pending: <b>{pendingSuggestions.length}</b>
+                    </div>
+                  </div>
+
+                  {pendingSuggestions.length === 0 ? (
+                    <div style={{ marginTop: 8, fontSize: 12, opacity: 0.8 }}>No pending suggestions.</div>
+                  ) : (
+                    <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+                      {pendingSuggestions.slice(0, 8).map((s) => (
+                        <div key={s.id} style={{ border: "1px solid #eee", borderRadius: 8, padding: 8 }}>
+                          <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 4 }}>
+                            {s.source} • {s.target.level}[{s.target.index}]
+                          </div>
+                          <div style={{ fontSize: 12, color: "#b42318", background: "#fef3f2", border: "1px solid #fecaca", borderRadius: 6, padding: 6 }}>
+                            - {s.currentText}
+                          </div>
+                          <div style={{ marginTop: 6, fontSize: 12, color: "#067647", background: "#ecfdf3", border: "1px solid #a6f4c5", borderRadius: 6, padding: 6 }}>
+                            + {s.suggestedText}
+                          </div>
+                          <div style={{ marginTop: 6, fontSize: 12, opacity: 0.75 }}>{s.rationale}</div>
+                          <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
+                            <button style={btnStyle} onClick={() => cancelSuggestion(s)} disabled={loading}>
+                              Cancel
+                            </button>
+                            <button style={btnStyle} onClick={() => keepSuggestion(s)} disabled={loading}>
+                              Keep
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
               <pre
                 style={{
                   whiteSpace: "pre-wrap",
@@ -453,7 +605,7 @@ export default function Page() {
                   overflow: "auto",
                 }}
               >
-                {pretty(draftLfo ?? drafting)}
+                {pretty(activeDraft ?? drafting)}
               </pre>
             </>
           )}
