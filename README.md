@@ -78,6 +78,24 @@ This ensures the system **pauses when critical information is missing** instead 
 
 ---
 
+### Engine 2.5 — Objective Classifier Engine
+
+Purpose: validate that LogFrame statements are correctly classified by level and not mixed-level.
+
+Input:
+
+* `lfo`
+* `context`
+* `policy`
+
+Output (Findings Contract):
+
+* `findings` (e.g., mixed-level, `OUTCOME_AS_INPUT`)
+* `recommended_edits` (e.g., relabel / split)
+* `scores` (including `structure_integrity`)
+
+---
+
 ### Refinement Loop (Human-in-the-Loop)
 
 After the initial draft:
@@ -163,7 +181,8 @@ lfd_poc/
 │  └── engines/
 │     ├── intake_preprocess.py     # Engine 2.2
 │     ├── structure_drafting.py    # Engine 2.3 + refine
-│     └── clarification_manager.py # Engine 2.4
+│     ├── clarification_manager.py # Engine 2.4
+│     └── objective_classifier.py  # Engine 2.5
 ├── tests/
 │  └── test_pipeline.py
 ├── frontend/                 # Optional Next.js UI
@@ -227,6 +246,7 @@ API available at:
 * `POST /draft` → generate initial draft + questions
 * `POST /refine` → apply user answers and improve draft
 * `POST /resume` → legacy resume behavior (debug/testing)
+* `POST /classify-objectives` → run structure integrity classification on LFO statements
 
 ---
 
@@ -252,6 +272,8 @@ Engine 2.2 — Intake & Preprocess
 Engine 2.3 — Structure Draft
    ↓
 Engine 2.4 — Clarification Manager
+   ↓
+Engine 2.5 — Objective Classifier
    ↓
 Human Answers
    ↓
@@ -282,6 +304,7 @@ This POC implements:
 * Engine 2.2 — Intake & Preprocess
 * Engine 2.3 — Structure Draft & Refine
 * Engine 2.4 — Clarification Manager
+* Engine 2.5 — Objective Classifier
 
 ---
 
