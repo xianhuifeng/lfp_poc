@@ -22,7 +22,7 @@ class DraftLogFrame(BaseModel):
     goal: str
     purpose: str
     outcomes: List[str] = Field(..., min_items=1, max_items=5)
-    inputs: List[str] = Field(..., min_items=1, max_items=5)
+    inputs: List[str] = Field(..., min_items=1, max_items=10)
     user_answers: Optional[Dict[str, str]] = Field(default=None,description="User-provided answers keyed by clarification question id")
 
 

@@ -37,6 +37,8 @@ type ReviewSuggestion = {
   relabelToLevel?: "goal" | "purpose" | "outcome" | "input";
 };
 
+type BusyAction = "generate" | "refine" | "refresh_diagnostics" | "amendment" | "apply_suggestion" | null;
+
 function normalizeIdPart(value: string): string {
   return (value || "")
     .toLowerCase()
@@ -77,6 +79,8 @@ export default function Page() {
   );
 
   const [loading, setLoading] = useState(false);
+  const [busyAction, setBusyAction] = useState<BusyAction>(null);
+  const [busySuggestionId, setBusySuggestionId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sourceLocked, setSourceLocked] = useState(false);
   const [amendmentText, setAmendmentText] = useState("");
@@ -154,7 +158,7 @@ export default function Page() {
     // v1 supports list-level relabels only (outcome <-> input).
     if (target.level === "outcome" && toLevel === "input") {
       if (target.index < 0 || target.index >= next.outcomes.length) return null;
-      if (next.outcomes.length <= 1 || next.inputs.length >= 5) return null;
+      if (next.outcomes.length <= 1 || next.inputs.length >= 10) return null;
       const [moved] = next.outcomes.splice(target.index, 1);
       next.inputs.push(moved);
       return next;
@@ -173,14 +177,30 @@ export default function Page() {
 
   const reviewSuggestions: ReviewSuggestion[] = useMemo(() => {
     const out: ReviewSuggestion[] = [];
-    const baseDraft = activeDraft;
+    const seen = new Set<string>();
+
+    const pushUnique = (item: ReviewSuggestion) => {
+      const signature = [
+        item.source,
+        item.target.level,
+        item.currentText.trim().toLowerCase(),
+        item.suggestedText.trim().toLowerCase(),
+        item.rationale.trim().toLowerCase(),
+        item.relabelToLevel ?? "",
+      ].join("|");
+      if (seen.has(signature)) return;
+      seen.add(signature);
+      out.push(item);
+    };
 
     for (const edit of (classification?.recommended_edits ?? [])) {
       const suggested = edit.replacement_texts?.[0];
-      const current = getStatementText(baseDraft, edit.statement) ?? edit.statement.text;
+      // Keep suggestion cards anchored to backend output; do not retarget by index
+      // after local edits, otherwise cards can appear to "change into" other suggestions.
+      const current = edit.statement.text;
       if (suggested) {
         const id = buildSuggestionId("structure", edit.statement, current, suggested, edit.rationale);
-        out.push({
+        pushUnique({
           id,
           source: "structure",
           severity: "warn",
@@ -194,7 +214,7 @@ export default function Page() {
       if (edit.action === "relabel" && edit.to_level) {
         const relabelSuggestedText = `Move to ${edit.to_level}: ${current}`;
         const id = buildSuggestionId("structure", edit.statement, current, relabelSuggestedText, edit.rationale);
-        out.push({
+        pushUnique({
           id,
           source: "structure",
           severity: "warn",
@@ -208,7 +228,7 @@ export default function Page() {
     }
 
     for (const suggestion of (causalLogic?.rewrite_suggestions ?? [])) {
-      const current = getStatementText(baseDraft, suggestion.target) ?? suggestion.target.text;
+      const current = suggestion.target.text;
       const id = buildSuggestionId(
         "causal",
         suggestion.target,
@@ -216,7 +236,7 @@ export default function Page() {
         suggestion.suggested_text,
         suggestion.rationale
       );
-      out.push({
+      pushUnique({
         id,
         source: "causal",
         severity: "warn",
@@ -228,8 +248,8 @@ export default function Page() {
     }
 
     for (const suggestion of amendmentSuggestions) {
-      const current = getStatementText(baseDraft, suggestion.target) ?? suggestion.current_text;
-      out.push({
+      const current = suggestion.current_text;
+      pushUnique({
         id: suggestion.id,
         source: "amendment",
         severity: "warn",
@@ -242,21 +262,37 @@ export default function Page() {
     }
 
     return out;
-  }, [classification, causalLogic, amendmentSuggestions, activeDraft]);
+  }, [classification, causalLogic, amendmentSuggestions]);
 
   const pendingSuggestions = reviewSuggestions.filter((s) => (suggestionStatus[s.id] ?? "pending") === "pending");
+  const busyLabel =
+    busyAction === "generate"
+      ? "Generating first draft..."
+      : busyAction === "refine"
+        ? "Refining draft using your answers..."
+        : busyAction === "refresh_diagnostics"
+          ? "Refreshing structure and causal diagnostics..."
+          : busyAction === "amendment"
+            ? "Generating amendment suggestions..."
+            : busyAction === "apply_suggestion"
+              ? "Applying suggestion and re-checking..."
+              : null;
 
   async function runChecksForDraft(lfo: DraftLogFrame) {
-    try {
-      const res = await api.classifyObjectives({ lfo });
-      setClassification(res.classification);
-    } catch {
+    const [classificationResult, causalResult] = await Promise.allSettled([
+      api.classifyObjectives({ lfo }),
+      api.analyzeCausalLogic({ lfo }),
+    ]);
+
+    if (classificationResult.status === "fulfilled") {
+      setClassification(classificationResult.value.classification);
+    } else {
       setClassification(null);
     }
-    try {
-      const res = await api.analyzeCausalLogic({ lfo });
-      setCausalLogic(res.analysis);
-    } catch {
+
+    if (causalResult.status === "fulfilled") {
+      setCausalLogic(causalResult.value.analysis);
+    } else {
       setCausalLogic(null);
     }
   }
@@ -265,7 +301,11 @@ export default function Page() {
     const base = activeDraft;
     if (!base) return;
     const latestCurrent = getStatementText(base, suggestion.target);
-    if (latestCurrent !== null && latestCurrent !== suggestion.currentText) {
+    if (latestCurrent === null) {
+      setError("This suggestion target no longer exists (index changed). Refresh diagnostics to get updated suggestions.");
+      return;
+    }
+    if (latestCurrent !== suggestion.currentText) {
       setError("This suggestion is stale because the target text changed. Re-run checks first.");
       return;
     }
@@ -273,13 +313,36 @@ export default function Page() {
       ? applyRelabelToDraft(base, suggestion.target, suggestion.relabelToLevel)
       : applyRewriteToDraft(base, suggestion.target, suggestion.suggestedText);
     if (!updated) {
-      setError("Unable to apply suggestion: invalid target or list limits reached (keep 1-5 outcomes/inputs).");
+      setError("Unable to apply suggestion. The suggestion may be stale or blocked by list limits (outcomes 1-5, inputs 1-10). Refresh diagnostics and try again.");
       return;
     }
-    setEditableDraft(updated);
-    setSuggestionStatus((prev) => ({ ...prev, [suggestion.id]: "applied" }));
-    // Re-run checks immediately so resolved warnings disappear from UI.
-    await runChecksForDraft(updated);
+    setLoading(true);
+    setBusyAction("apply_suggestion");
+    setBusySuggestionId(suggestion.id);
+    try {
+      setEditableDraft(updated);
+      setSuggestionStatus((prev) => {
+        const next = { ...prev };
+        // Mark the applied suggestion and only dismiss suggestions that point to
+        // the exact same statement slot.
+        for (const candidate of reviewSuggestions) {
+          if (candidate.id === suggestion.id) {
+            next[candidate.id] = "applied";
+          } else if (
+            candidate.target.level === suggestion.target.level
+            && candidate.target.index === suggestion.target.index
+            && (next[candidate.id] ?? "pending") === "pending"
+          ) {
+            next[candidate.id] = "dismissed";
+          }
+        }
+        return next;
+      });
+    } finally {
+      setBusySuggestionId(null);
+      setBusyAction(null);
+      setLoading(false);
+    }
   }
 
   function cancelSuggestion(suggestion: ReviewSuggestion) {
@@ -305,6 +368,7 @@ export default function Page() {
     const text = amendmentText.trim();
     if (!text) return;
     setLoading(true);
+    setBusyAction("amendment");
     setError(null);
     try {
       const batchId = `amd-${Date.now()}`;
@@ -331,6 +395,7 @@ export default function Page() {
     } catch (e: any) {
       setError(e?.message ?? String(e));
     } finally {
+      setBusyAction(null);
       setLoading(false);
     }
   }
@@ -355,6 +420,7 @@ export default function Page() {
 
   async function onGenerate() {
     setLoading(true);
+    setBusyAction("generate");
     setError(null);
     try {
       const r = await api.draft(rawText);
@@ -367,12 +433,13 @@ export default function Page() {
       if (lfo) {
         setSourceLocked(true);
         setEditableDraft(lfo);
-        await runChecksForDraft(lfo);
+        void runChecksForDraft(lfo);
       }
 
     } catch (e: any) {
       setError(e?.message ?? String(e));
     } finally {
+      setBusyAction(null);
       setLoading(false);
     }
   }
@@ -380,6 +447,7 @@ export default function Page() {
   async function onRefine() {
     if (!activeDraft) return;
     setLoading(true);
+    setBusyAction("refine");
     setError(null);
     try {
       // send only non-empty answers
@@ -396,6 +464,8 @@ export default function Page() {
         policy: { max_questions: 3, allow_proceed_with_assumptions: true },
       });
       setResult(r);
+      // Start the next clarification round with empty inputs.
+      setAnswers({});
       setSuggestionStatus({});
       setAmendmentSuggestions([]);
 
@@ -403,12 +473,26 @@ export default function Page() {
       const lfo = (r as any)?.drafting?.draft_lfo;
       if (lfo) {
         setEditableDraft(lfo);
-        await runChecksForDraft(lfo);
+        void runChecksForDraft(lfo);
       }
 
     } catch (e: any) {
       setError(e?.message ?? String(e));
     } finally {
+      setBusyAction(null);
+      setLoading(false);
+    }
+  }
+
+  async function onRefreshDiagnostics() {
+    if (!activeDraft) return;
+    setLoading(true);
+    setBusyAction("refresh_diagnostics");
+    setError(null);
+    try {
+      await runChecksForDraft(activeDraft);
+    } finally {
+      setBusyAction(null);
       setLoading(false);
     }
   }
@@ -416,28 +500,16 @@ export default function Page() {
   return (
     <main style={{ fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, sans-serif", padding: 16 }}>
       <h1 style={{ margin: "0 0 12px 0" }}>LogFrame Designer</h1>
+      <div style={{ marginBottom: 8, fontSize: 12, opacity: 0.8 }}>
+        Workflow: 1) Generate first draft, 2) answer clarification questions, 3) refine using answers.
+      </div>
+      {busyLabel && (
+        <div style={{ marginBottom: 8, fontSize: 12, color: "#555" }}>Working: {busyLabel}</div>
+      )}
 
       <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 12 }}>
         <button onClick={onGenerate} disabled={loading} style={btnStyle}>
-          {loading ? "Working..." : "Generate first draft"}
-        </button>
-
-        <button
-          onClick={onRefine}
-          disabled={loading || !activeDraft || questionSet.length === 0}
-          style={btnStyle}
-          title={questionSet.length === 0 ? "No questions to answer." : "Apply answers and refine draft"}
-        >
-          {loading ? "Working..." : "Refine with answers"}
-        </button>
-
-        <button
-          onClick={() => activeDraft && runChecksForDraft(activeDraft)}
-          disabled={loading || !activeDraft}
-          style={btnStyle}
-          title="Re-run structure and causal checks for the current draft"
-        >
-          Re-run checks
+          {busyAction === "generate" ? "Generating..." : "Generate first draft"}
         </button>
 
         <button
@@ -544,7 +616,7 @@ export default function Page() {
                   disabled={loading || !activeDraft || !amendmentText.trim()}
                   title="Generate targeted rewrite suggestions from amendment text"
                 >
-                  Generate amendment suggestions
+                  {busyAction === "amendment" ? "Generating suggestions..." : "Generate amendment suggestions"}
                 </button>
                 <button
                   style={btnStyle}
@@ -657,13 +729,34 @@ export default function Page() {
                   The assistant is waiting for required answers before proceeding.
                 </div>
               )}
+
+              <div style={{ marginTop: 12, display: "flex", justifyContent: "flex-start" }}>
+                <button
+                  onClick={onRefine}
+                  disabled={loading || !activeDraft || questionSet.length === 0}
+                  style={btnStyle}
+                  title={questionSet.length === 0 ? "No questions to answer." : "Apply answers and refine draft"}
+                >
+                  {busyAction === "refine" ? "Refining..." : "Refine using clarification answers"}
+                </button>
+              </div>
             </>
           )}
         </section>
 
         {/* Draft */}
         <section style={cardStyle}>
-          <h2 style={h2Style}>Draft</h2>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <h2 style={h2Style}>Draft</h2>
+            <button
+              onClick={onRefreshDiagnostics}
+              disabled={loading || !activeDraft}
+              style={btnStyle}
+              title="Refresh structure and causal diagnostics for the current draft"
+            >
+              {busyAction === "refresh_diagnostics" ? "Refreshing..." : "Refresh diagnostics"}
+            </button>
+          </div>
           {result === null ? (
             <p style={pStyle}>Your draft will appear here.</p>
           ) : (
@@ -804,7 +897,7 @@ export default function Page() {
                               Cancel
                             </button>
                             <button style={btnStyle} onClick={() => { void keepSuggestion(s); }} disabled={loading}>
-                              Keep
+                              {busyAction === "apply_suggestion" && busySuggestionId === s.id ? "Applying..." : "Keep"}
                             </button>
                           </div>
                         </div>

@@ -25,7 +25,7 @@ def _clamp_list(values: List[str], max_items: int = 5) -> List[str]:
 def _sanitize_amended_draft(data: dict) -> dict:
     # Keep the same cardinality constraints as the rest of the app.
     data["outcomes"] = _clamp_list(data.get("outcomes", []), 5)
-    data["inputs"] = _clamp_list(data.get("inputs", []), 5)
+    data["inputs"] = _clamp_list(data.get("inputs", []), 10)
     return data
 
 

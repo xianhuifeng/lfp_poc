@@ -48,7 +48,7 @@ Given messy project text, the system assists a user in **creating a solid first-
   * Goal
   * Purpose
   * Outcomes (1–5)
-  * Inputs (1–5)
+  * Inputs (1–10)
 * Produces a **confidence score** (0–1) indicating draft completeness
 * Generates **open clarification questions** when information is missing
 * Provides a **mapping** showing how input text supports each field

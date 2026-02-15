@@ -28,7 +28,8 @@ Return JSON matching this shape exactly:
 Rules:
 - confidence must be between 0 and 1.
 - open_questions max 5.
-- outcomes and inputs: 1 to 5 items.
+- outcomes: 1 to 5 items.
+- inputs: 1 to 10 items.
 - mapping should include short phrases copied or paraphrased from the input that justify each field.
 - No markdown. No commentary. JSON only.
 """
@@ -73,7 +74,8 @@ Return JSON matching this shape exactly:
 Rules:
 - confidence must be between 0 and 1.
 - open_questions max 5.
-- outcomes and inputs: 1 to 5 items.
+- outcomes: 1 to 5 items.
+- inputs: 1 to 10 items.
 - JSON only. No markdown. No commentary.
 """
 
@@ -109,7 +111,8 @@ Task:
 }
 
 Rules:
-- Keep outcomes and inputs between 1 and 5 items.
+- Keep outcomes between 1 and 5 items.
+- Keep inputs between 1 and 10 items.
 - Prefer updating existing statements rather than inventing unrelated new items.
 - Keep language concrete and observable.
 - No markdown. No commentary. JSON only.
