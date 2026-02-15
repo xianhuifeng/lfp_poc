@@ -7,11 +7,14 @@ from app.schemas import (
     RefineResponse,
     ObjectiveClassifierInput,
     ObjectiveClassifierOutput,
+    CausalLogicInput,
+    CausalLogicOutput,
 )
 from app.engines.intake_preprocess import preprocess
 from app.engines.structure_drafting import structure_draft, refine_draft
 from app.engines.clarification_manager import clarification_manager
 from app.engines.objective_classifier import objective_classifier_engine
+from app.engines.causal_logic_engine import causal_logic_engine
 
 # Helper function to run the pipeline
 def run_pipeline(raw_text: str) -> DraftResponse:
@@ -108,3 +111,16 @@ def run_objective_classifier(
         policy=policy or {},
     )
     return objective_classifier_engine(payload)
+
+
+def run_causal_logic(
+    lfo,
+    context=None,
+    policy=None,
+) -> CausalLogicOutput:
+    payload = CausalLogicInput(
+        lfo=lfo,
+        context=context,
+        policy=policy or {},
+    )
+    return causal_logic_engine(payload)

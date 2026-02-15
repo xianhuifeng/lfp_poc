@@ -214,3 +214,79 @@ class ObjectiveClassifierRequest(BaseModel):
 
 class ObjectiveClassifierResponse(BaseModel):
     classification: ObjectiveClassifierOutput
+
+
+# -----------------------------
+# 2.6 Causal Logic Engine
+# -----------------------------
+
+CausalFindingType = Literal[
+    "OUTCOME_TO_PURPOSE_GAP",
+    "PURPOSE_TO_GOAL_GAP",
+    "INPUT_TO_OUTCOME_GAP",
+    "CIRCULAR_LOGIC",
+    "NON_CAUSAL_STATEMENT",
+]
+
+
+class CausalFinding(BaseModel):
+    type: CausalFindingType
+    severity: Severity = "warn"
+    message: str
+    from_statement: Optional[StatementRef] = None
+    to_statement: Optional[StatementRef] = None
+    evidence: Dict[str, float] = Field(default_factory=dict)
+
+
+class CausalRewriteSuggestion(BaseModel):
+    target: StatementRef
+    suggested_text: str
+    rationale: str
+
+
+class CausalLogicScores(BaseModel):
+    causal_logic: float = Field(..., ge=0.0, le=1.0)
+    by_link: Dict[str, float] = Field(default_factory=dict)
+
+
+class CausalLogicPolicy(BaseModel):
+    # advisory-first defaults
+    advisory_first: bool = True
+    detect_circularity: bool = True
+    detect_non_causal: bool = True
+
+    # similarity thresholds for plausible causal links
+    outcomes_to_purpose_warn_threshold: float = Field(default=0.16, ge=0.0, le=1.0)
+    purpose_to_goal_warn_threshold: float = Field(default=0.14, ge=0.0, le=1.0)
+    inputs_to_outcomes_warn_threshold: float = Field(default=0.12, ge=0.0, le=1.0)
+
+    # scoring penalties
+    penalty_error: float = 0.10
+    penalty_warn: float = 0.04
+    penalty_info: float = 0.02
+
+
+class CausalLogicInput(BaseModel):
+    lfo: DraftLogFrame
+    context: Optional[Dict[str, Any]] = None
+    policy: CausalLogicPolicy = Field(default_factory=CausalLogicPolicy)
+
+
+class CausalLogicOutput(BaseModel):
+    findings: List[CausalFinding] = Field(default_factory=list)
+    rewrite_suggestions: List[CausalRewriteSuggestion] = Field(default_factory=list)
+    scores: CausalLogicScores
+
+
+# -----------------------------
+# 2.6 Causal Logic API
+# -----------------------------
+
+class CausalLogicRequest(BaseModel):
+    lfo: DraftLogFrame
+    context: Optional[Dict[str, Any]] = None
+    policy: CausalLogicPolicy = Field(default_factory=CausalLogicPolicy)
+
+
+class CausalLogicResponse(BaseModel):
+    analysis: CausalLogicOutput

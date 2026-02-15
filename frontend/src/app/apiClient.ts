@@ -97,6 +97,42 @@ export type ClarificationPolicy = {
   export type ObjectiveClassifierResponse = {
     classification: ObjectiveClassification;
   };  
+
+export type CausalFinding = {
+  type: string;
+  severity: Severity;
+  message: string;
+  from_statement?: StatementRef | null;
+  to_statement?: StatementRef | null;
+  evidence?: Record<string, number>;
+};
+
+export type CausalRewriteSuggestion = {
+  target: StatementRef;
+  suggested_text: string;
+  rationale: string;
+};
+
+export type CausalScores = {
+  causal_logic: number;
+  by_link?: Record<string, number>;
+};
+
+export type CausalLogicAnalysis = {
+  findings: CausalFinding[];
+  rewrite_suggestions: CausalRewriteSuggestion[];
+  scores: CausalScores;
+};
+
+export type CausalLogicRequest = {
+  lfo: DraftLogFrame;
+  context?: Record<string, any> | null;
+  policy?: Record<string, any> | null;
+};
+
+export type CausalLogicResponse = {
+  analysis: CausalLogicAnalysis;
+};
   
   const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
   
@@ -117,5 +153,6 @@ export type ClarificationPolicy = {
     draft: (text: string) => postJson<DraftResponse>("/draft", { text }),
     refine: (req: RefineRequest) => postJson<RefineResponse>("/refine", req),
     classifyObjectives: (req: ObjectiveClassifierRequest) => postJson<ObjectiveClassifierResponse>("/classify-objectives", req),
+  analyzeCausalLogic: (req: CausalLogicRequest) => postJson<CausalLogicResponse>("/causal-logic", req),
   };
   

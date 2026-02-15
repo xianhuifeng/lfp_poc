@@ -96,6 +96,24 @@ Output (Findings Contract):
 
 ---
 
+### Engine 2.6 — Causal Logic Engine
+
+Purpose: validate vertical logic (`Outcomes -> Purpose -> Goal`) and whether Inputs plausibly produce Outcomes.
+
+Input:
+
+* `lfo`
+* `context`
+* `policy`
+
+Output (Findings Contract):
+
+* `findings` (e.g., causal gaps, circularity, non-causal statements)
+* `rewrite_suggestions`
+* `scores` (including `causal_logic`)
+
+---
+
 ### Refinement Loop (Human-in-the-Loop)
 
 After the initial draft:
@@ -177,12 +195,13 @@ lfd_poc/
 │  ├── main.py                # FastAPI entrypoint
 │  ├── schemas.py             # Canonical data contracts
 │  ├── prompts.py             # Draft & refine prompts
-│  ├── orchestrator.py        # 2.2 → 2.4 pipeline
+│  ├── orchestrator.py        # engine orchestration (2.2 → 2.6)
 │  └── engines/
 │     ├── intake_preprocess.py     # Engine 2.2
 │     ├── structure_drafting.py    # Engine 2.3 + refine
 │     ├── clarification_manager.py # Engine 2.4
-│     └── objective_classifier.py  # Engine 2.5
+│     ├── objective_classifier.py  # Engine 2.5
+│     └── causal_logic_engine.py   # Engine 2.6
 ├── tests/
 │  └── test_pipeline.py
 ├── frontend/                 # Optional Next.js UI
@@ -247,6 +266,7 @@ API available at:
 * `POST /refine` → apply user answers and improve draft
 * `POST /resume` → legacy resume behavior (debug/testing)
 * `POST /classify-objectives` → run structure integrity classification on LFO statements
+* `POST /causal-logic` → run advisory causal logic checks on LFO statements
 
 ---
 
@@ -274,6 +294,8 @@ Engine 2.3 — Structure Draft
 Engine 2.4 — Clarification Manager
    ↓
 Engine 2.5 — Objective Classifier
+   ↓
+Engine 2.6 — Causal Logic
    ↓
 Human Answers
    ↓
@@ -305,6 +327,7 @@ This POC implements:
 * Engine 2.3 — Structure Draft & Refine
 * Engine 2.4 — Clarification Manager
 * Engine 2.5 — Objective Classifier
+* Engine 2.6 — Causal Logic
 
 ---
 

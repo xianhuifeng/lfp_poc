@@ -1,7 +1,15 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { api, type ClarificationQuestion, type DraftLogFrame, type DraftResponse, type RefineResponse, type ObjectiveClassification } from "./apiClient";
+import {
+  api,
+  type ClarificationQuestion,
+  type DraftLogFrame,
+  type DraftResponse,
+  type RefineResponse,
+  type ObjectiveClassification,
+  type CausalLogicAnalysis,
+} from "./apiClient";
 
 type ApiResult = DraftResponse | RefineResponse;
 
@@ -27,6 +35,7 @@ export default function Page() {
   const [answers, setAnswers] = useState<Record<string, string>>({});
   // classification of objectives
   const [classification, setClassification] = useState<ObjectiveClassification | null>(null);
+  const [causalLogic, setCausalLogic] = useState<CausalLogicAnalysis | null>(null);
 
 
   const drafting = (result as any)?.drafting;
@@ -37,6 +46,7 @@ export default function Page() {
 
   const blocked = clarification?.next_action === "wait_for_user";
   const hasErrors = (classification?.findings ?? []).some(f => f.severity === "error");
+  const hasCausalErrors = (causalLogic?.findings ?? []).some(f => f.severity === "error");
 
 
   // reset answers when new questions appear (but keep existing if ids overlap)
@@ -72,6 +82,13 @@ export default function Page() {
         } catch (e) {
           // non-fatal; don't block UI
           setClassification(null);
+        }
+        try {
+          const res = await api.analyzeCausalLogic({ lfo });
+          setCausalLogic(res.analysis);
+        } catch (e) {
+          // non-fatal; don't block UI
+          setCausalLogic(null);
         }
       }
 
@@ -111,6 +128,13 @@ export default function Page() {
         } catch (e) {
           // non-fatal; don't block UI
           setClassification(null);
+        }
+        try {
+          const res = await api.analyzeCausalLogic({ lfo });
+          setCausalLogic(res.analysis);
+        } catch (e) {
+          // non-fatal; don't block UI
+          setCausalLogic(null);
         }
       }
 
@@ -370,6 +394,52 @@ export default function Page() {
                 </div>
               )}
 
+              {causalLogic && (
+                <div style={{ marginBottom: 10, padding: 10, border: "1px solid #eee", borderRadius: 10, background: "#fffdfb" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <div style={{ fontWeight: 700 }}>Causal logic</div>
+                    <div style={{ fontSize: 13 }}>
+                      <b>{Number(causalLogic.scores.causal_logic).toFixed(2)}</b>
+                    </div>
+                  </div>
+
+                  <div style={{ marginTop: 10, marginBottom: 10 }}>
+                    {hasCausalErrors ? (
+                      <div style={{ padding: 10, borderRadius: 10, border: "1px solid #ffb3b3", background: "#ffecec" }}>
+                        <b>Flagged:</b> Critical causal issues found.
+                      </div>
+                    ) : (
+                      <div style={{ padding: 10, borderRadius: 10, border: "1px solid #cfe8cf", background: "#effaf0" }}>
+                        <b>Advisory:</b> Causal logic checks completed (warning-first mode).
+                      </div>
+                    )}
+                  </div>
+
+                  <div style={{ marginTop: 8, fontSize: 12, opacity: 0.85 }}>
+                    {causalLogic.findings?.length ? (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        {causalLogic.findings.slice(0, 6).map((f, idx) => (
+                          <div key={idx} style={{ padding: 8, border: "1px solid #f0f0f0", borderRadius: 8 }}>
+                            <div style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
+                              <span style={{ fontWeight: 700 }}>{f.severity.toUpperCase()}</span>
+                              <span style={{ opacity: 0.7 }}>{f.type}</span>
+                            </div>
+                            <div style={{ marginTop: 4 }}>{f.message}</div>
+                            {f.from_statement && (
+                              <div style={{ marginTop: 4, opacity: 0.7 }}>
+                                {f.from_statement.level}[{f.from_statement.index}]: {f.from_statement.text}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div>No causal gaps detected.</div>
+                    )}
+                  </div>
+                </div>
+              )}
+
               <pre
                 style={{
                   whiteSpace: "pre-wrap",
@@ -391,7 +461,7 @@ export default function Page() {
       </div>
 
       <div style={{ marginTop: 14, fontSize: 12, opacity: 0.7 }}>
-        Backend endpoints used: <code>/draft</code> and <code>/refine</code> (FastAPI).
+        Backend endpoints used: <code>/draft</code>, <code>/refine</code>, <code>/classify-objectives</code>, and <code>/causal-logic</code>.
       </div>
     </main>
   );
