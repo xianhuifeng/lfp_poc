@@ -634,26 +634,6 @@ export default function Page() {
                     )}
                   </div>
 
-                  {/* Recommended edits */}
-                  {classification.recommended_edits?.length ? (
-                    <div style={{ marginTop: 10 }}>
-                      <div style={{ fontWeight: 700, marginBottom: 6 }}>Recommended edits</div>
-                      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                        {classification.recommended_edits.map((e, idx) => (
-                          <div key={idx} style={{ padding: 8, border: "1px solid #eee", borderRadius: 8, fontSize: 12 }}>
-                            <div>
-                              <b>{e.action}</b>
-                              {e.to_level ? ` → ${e.to_level}` : ""}
-                            </div>
-                            <div style={{ opacity: 0.8, marginTop: 4 }}>
-                              {e.statement.level}[{e.statement.index}]: {e.statement.text}
-                            </div>
-                            <div style={{ opacity: 0.75, marginTop: 4 }}>{e.rationale}</div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ) : null}
                 </div>
               )}
 
