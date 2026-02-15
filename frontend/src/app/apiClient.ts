@@ -133,6 +133,28 @@ export type CausalLogicRequest = {
 export type CausalLogicResponse = {
   analysis: CausalLogicAnalysis;
 };
+
+export type AmendmentSuggestion = {
+  id: string;
+  target: StatementRef;
+  current_text: string;
+  suggested_text: string;
+  rationale: string;
+  safe_to_apply: boolean;
+  confidence: number;
+};
+
+export type AmendDraftRequest = {
+  raw_text?: string | null;
+  amendment_text: string;
+  draft_lfo: DraftLogFrame;
+  context?: Record<string, any> | null;
+  policy?: Record<string, any> | null;
+};
+
+export type AmendDraftResponse = {
+  suggestions: AmendmentSuggestion[];
+};
   
   const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
   
@@ -154,5 +176,6 @@ export type CausalLogicResponse = {
     refine: (req: RefineRequest) => postJson<RefineResponse>("/refine", req),
     classifyObjectives: (req: ObjectiveClassifierRequest) => postJson<ObjectiveClassifierResponse>("/classify-objectives", req),
   analyzeCausalLogic: (req: CausalLogicRequest) => postJson<CausalLogicResponse>("/causal-logic", req),
+  amendDraft: (req: AmendDraftRequest) => postJson<AmendDraftResponse>("/amend-draft", req),
   };
   

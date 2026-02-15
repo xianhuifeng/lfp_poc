@@ -290,3 +290,41 @@ class CausalLogicRequest(BaseModel):
 
 class CausalLogicResponse(BaseModel):
     analysis: CausalLogicOutput
+
+
+# -----------------------------
+# Amendment Suggestion Engine
+# -----------------------------
+
+class AmendmentSuggestion(BaseModel):
+    id: str
+    target: StatementRef
+    current_text: str
+    suggested_text: str
+    rationale: str
+    safe_to_apply: bool = True
+    confidence: float = Field(default=0.7, ge=0.0, le=1.0)
+
+
+class AmendmentDraftInput(BaseModel):
+    raw_text: Optional[str] = None
+    amendment_text: str
+    draft_lfo: DraftLogFrame
+    context: Optional[Dict[str, Any]] = None
+    policy: Optional[Dict[str, Any]] = None
+
+
+class AmendmentDraftOutput(BaseModel):
+    suggestions: List[AmendmentSuggestion] = Field(default_factory=list)
+
+
+class AmendDraftRequest(BaseModel):
+    raw_text: Optional[str] = None
+    amendment_text: str
+    draft_lfo: DraftLogFrame
+    context: Optional[Dict[str, Any]] = None
+    policy: Optional[Dict[str, Any]] = None
+
+
+class AmendDraftResponse(BaseModel):
+    suggestions: List[AmendmentSuggestion] = Field(default_factory=list)
